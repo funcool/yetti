@@ -70,13 +70,13 @@ Any ring handler can upgrade to websocket protocol, there is an example:
   [request]
   (if (yws/upgrade-request? request)
     (yws/upgrade request (fn [upgrade-request]
-                            {:on-connect (fn [ws])
-                             :on-error (fn [ws e])
-                             :on-close (fn [ws status-code reason])
-                             :on-text (fn [ws text-message])
-                             :on-bytes (fn [ws bytes offset len])
-                             :on-ping (fn [ws bytebuffer])
-                             :on-pong (fn [ws bytebuffer])}))
+                           {:on-connect (fn [ws])
+                            :on-error (fn [ws e])
+                            :on-close (fn [ws status-code reason])
+                            :on-text (fn [ws text-message])
+                            :on-bytes (fn [ws bytes offset len])
+                            :on-ping (fn [ws bytebuffer])
+                            :on-pong (fn [ws bytebuffer])}))
     {:status 404}))
 ```
 
@@ -108,7 +108,8 @@ A callback can also be specified for `send!`:
 
 ## License
 
+```
 Copyright © 2021-Now Andrey Antukh
 Copyright © 2013-2021 Sun Ning
-
 Distributed under the Eclipse Public License, the same as Clojure.
+```
