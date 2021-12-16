@@ -15,7 +15,12 @@ It requires JDK >= 11.
 
 ## Usage
 
-TODO:
+On deps.edn:
+
+```clojure
+funcool/yetti {:git/tag "v1.0" :git/sha "e3d7794" 
+               :git/url "https://github.com/funcool/yetti.git"}
+```
 
 ### Code
 
