@@ -1,0 +1,29 @@
+{:paths ["src"]
+ :deps
+ {org.eclipse.jetty/jetty-server {:mvn/version "11.0.7"}
+  org.eclipse.jetty/jetty-alpn-server {:mvn/version "11.0.7"}
+  org.eclipse.jetty/jetty-alpn-java-server {:mvn/version "11.0.7"}
+  org.eclipse.jetty.websocket/websocket-jetty-api {:mvn/version "11.0.7"}
+  org.eclipse.jetty.websocket/websocket-jetty-server {:mvn/version "11.0.7"}
+  org.eclipse.jetty.websocket/websocket-servlet {:mvn/version "11.0.7"}
+  org.eclipse.jetty.http2/http2-server {:mvn/version "11.0.7"}
+  ring/ring-core {:mvn/version "1.9.4"}}
+
+ :aliases
+ {:dev
+  {:extra-deps
+   {org.clojure/tools.namespace {:mvn/version "RELEASE"}
+    org.clojure/clojure {:mvn/version "1.11.0-alpha3"}
+    org.clojure/test.check {:mvn/version "RELEASE"}
+    com.bhauman/rebel-readline {:mvn/version "RELEASE"}
+    criterium/criterium {:mvn/version "RELEASE"}}
+   :extra-paths ["test" "dev"]}
+
+  :build
+  {:deps {io.github.clojure/tools.build {:git/tag "v0.7.2" :git/sha "0361dde"}}
+   :ns-default build}
+
+  :outdated
+  {:extra-deps {com.github.liquidz/antq {:mvn/version "RELEASE"}}
+   :main-opts ["-m" "antq.core"]}}}
+
