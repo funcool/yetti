@@ -43,7 +43,6 @@
   [{:keys [status ws]}]
   (and (= 101 status) ws))
 
-;; TODO: check if it really needs
 (defn- wrap-servlet-handler
   "Wraps a Jetty handler in a ServletContextHandler.
 
