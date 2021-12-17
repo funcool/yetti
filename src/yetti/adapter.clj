@@ -47,7 +47,6 @@
    :send-date-header false
    :header-cache-size 512
    :max-idle-time 200000
-   :max-idle-time 200000
    :ws-max-idle-time 500000
    :ws-max-msg-size 65536
    :wrap-jetty-handler identity})
@@ -61,15 +60,9 @@
 (def thread-pool-defaults
   {:max-threads 200
    :min-threads 5
+   :idle-timeout 60000
    :job-queue nil
-   :daemon? true})
-
-(defn normalize-response
-  "Normalize response for ring spec"
-  [response]
-  (if (string? response)
-    {:body response}
-    response))
+   :daemon true})
 
 (defn- websocket-upgrade?
   [{:keys [status ws]}]
@@ -94,7 +87,7 @@
     (handle [_ ^Request base-request ^HttpServletRequest request ^HttpServletResponse response]
       (try
         (let [request-map  (util/build-request-map request)
-              response-map (-> request-map handler normalize-response)]
+              response-map (handler request-map)]
           (when response-map
             (if (websocket-upgrade? response-map)
               (ws/upgrade-websocket request response (:ws response-map) {})
@@ -113,10 +106,9 @@
         (let [^AsyncContext context (.startAsync request)]
           (handler (util/build-request-map request)
                    (fn [response-map]
-                     (let [response-map (normalize-response response-map)]
-                       (if (websocket-upgrade? response-map)
-                         (ws/upgrade-websocket request response context (:ws response-map) {})
-                         (util/update-servlet-response response context response-map))))
+                     (if (websocket-upgrade? response-map)
+                       (ws/upgrade-websocket request response context (:ws response-map) {})
+                       (util/update-servlet-response response context response-map)))
                    (fn [^Throwable exception]
                      (.sendError response 500 (.getMessage exception))
                      (.complete context))))
@@ -142,7 +134,7 @@
       (.setResponseHeaderSize response-header-size)
       (.setSendServerVersion send-server-version-header)
       (.setSendDateHeader send-date-header)
-      (.setHeaderCacheSize header-cache-size)))
+      (.setHeaderCacheSize header-cache-size))))
 
 (defn- ^SslContextFactory$Server create-ssl-context-factory
   [{:keys [keystore keystore-type key-password client-auth key-manager-password
@@ -222,13 +214,13 @@
     (doto (ServerConnector.
            ^Server server
            ^"[Lorg.eclipse.jetty.server.ConnectionFactory;"
-           (into-array CoennectionFactory factories))
+           (into-array ConnectionFactory factories))
       (.setPort port)
       (.setHost host)
       (.setIdleTimeout max-idle-time))))
 
 (defn- create-thread-pool
-  [{:keys [job-queue max-threads min-threads idle-timeout daemon]}]
+  [{:keys [job-queue max-threads min-threads idle-timeout daemon] :as options}]
   (doto (QueuedThreadPool. (int max-threads)
                            (int min-threads)
                            (int idle-timeout)
@@ -262,13 +254,14 @@
 (defn- create-server
   "Construct a Jetty Server instance."
   [{:keys [thread-pool] :as options}]
-  (let [pool (cond
-               (thread-pool? thread-pool) thread-pool
-               (map? thread-pool)         (create-thread-pool thread-pool)
-               :else                      (throw (IllegalArgumentException. "invalid thread-pool argument")))]
-    (doto (Server. ^ThreadPool pool)
-      (.addBean (ScheduledExecutorScheduler.))
-      (.setConnectors (create-connectors server options)))
+  (let [pool   (cond
+                 (thread-pool? thread-pool) thread-pool
+                 (map? thread-pool)         (create-thread-pool thread-pool)
+                 :else                      (throw (IllegalArgumentException. "invalid thread-pool argument")))
+        server (doto (Server. ^ThreadPool pool)
+                 (.addBean (ScheduledExecutorScheduler.)))]
+    (.setConnectors server (create-connectors server options))
+    server))
 
 (defn ^Server server
   "
