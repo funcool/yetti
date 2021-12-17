@@ -32,6 +32,38 @@
 
 ;; (set! *warn-on-reflection* true)
 
+(def base-defaults
+  {:http true
+   :http2 false
+   :http2c false
+   :async false
+   :proxy false
+   :port 11010
+   :host "localhost"
+   :output-buffer-size 32768
+   :request-header-size 8192
+   :response-header-size 8192
+   :send-server-version-header false
+   :send-date-header false
+   :header-cache-size 512
+   :max-idle-time 200000
+   :max-idle-time 200000
+   :ws-max-idle-time 500000
+   :ws-max-msg-size 65536
+   :wrap-jetty-handler identity})
+
+(def ssl-defaults
+  {:port 11011
+   :scheme "https"
+   :provider "Conscrypt"
+   :protocols ["TLSv1.3" "TLSv1.2"]})
+
+(def thread-pool-defaults
+  {:max-threads 200
+   :min-threads 5
+   :job-queue nil
+   :daemon? true})
+
 (defn normalize-response
   "Normalize response for ring spec"
   [response]
@@ -93,196 +125,217 @@
 
 (defn- create-http-config
   "Creates jetty http configurator"
-  [{:keys [ssl-port secure-scheme output-buffer-size request-header-size
-           response-header-size send-server-version? send-date-header?
+  [{:keys [output-buffer-size
+           request-header-size
+           response-header-size
+           send-server-version-header
+           send-date-header
            header-cache-size]
-    :or {ssl-port 443
-         secure-scheme "https"
-         output-buffer-size 32768
-         request-header-size 8192
-         response-header-size 8192
-         send-server-version? true
-         send-date-header? false
-         header-cache-size 512}}]
-
-  (doto (HttpConfiguration.)
-    (.setSecureScheme secure-scheme)
-    (.setSecurePort ssl-port)
-    (.setOutputBufferSize output-buffer-size)
-    (.setRequestHeaderSize request-header-size)
-    (.setResponseHeaderSize response-header-size)
-    (.setSendServerVersion send-server-version?)
-    (.setSendDateHeader send-date-header?)
-    (.setHeaderCacheSize header-cache-size)))
+    :as options}]
+  (let [secure-port   (or (get-in options [:ssl :port]) (:port ssl-defaults))
+        secure-scheme (or (get-in options [:ssl :scheme]) (:scheme ssl-defaults))]
+    (doto (HttpConfiguration.)
+      (.setSecurePort secure-port)
+      (.setSecureScheme secure-scheme)
+      (.setOutputBufferSize output-buffer-size)
+      (.setRequestHeaderSize request-header-size)
+      (.setResponseHeaderSize response-header-size)
+      (.setSendServerVersion send-server-version-header)
+      (.setSendDateHeader send-date-header)
+      (.setHeaderCacheSize header-cache-size)))
 
 (defn- ^SslContextFactory$Server create-ssl-context-factory
   [{:keys [keystore keystore-type key-password client-auth key-manager-password
-           truststore trust-password truststore-type ssl-protocols ssl-provider
-           exclude-ciphers replace-exclude-ciphers? exclude-protocols replace-exclude-protocols?]}]
+           truststore trust-password truststore-type protocols provider
+           exclude-ciphers exclude-protocols]}]
   (let [context-server (SslContextFactory$Server.)]
     (.setCipherComparator context-server HTTP2Cipher/COMPARATOR)
-    (when ssl-provider
-      (.setProvider context-server ssl-provider))
+
+    (when provider
+      (.setProvider context-server provider))
+
     (if (string? keystore)
       (.setKeyStorePath context-server keystore)
       (.setKeyStore context-server ^KeyStore keystore))
+
     (when (string? keystore-type)
       (.setKeyStoreType context-server keystore-type))
+
     (.setKeyStorePassword context-server key-password)
+
     (when key-manager-password
       (.setKeyManagerPassword context-server key-manager-password))
+
     (cond
-      (string? truststore)
-      (.setTrustStorePath context-server truststore)
-      (instance? KeyStore truststore)
-      (.setTrustStore context-server ^KeyStore truststore))
+      (string? truststore) (.setTrustStorePath context-server truststore)
+      (instance? KeyStore truststore) (.setTrustStore context-server ^KeyStore truststore))
+
     (when trust-password
       (.setTrustStorePassword context-server trust-password))
+
     (when truststore-type
       (.setTrustStoreType context-server truststore-type))
+
     (case client-auth
       :need (.setNeedClientAuth context-server true)
       :want (.setWantClientAuth context-server true)
       nil)
-    (when-let [exclude-ciphers exclude-ciphers]
+
+    (when (seq exclude-ciphers)
       (let [ciphers (into-array String exclude-ciphers)]
-        (if replace-exclude-ciphers?
+        (if (:replace (meta exclude-ciphers))
           (.setExcludeCipherSuites context-server ciphers)
           (.addExcludeCipherSuites context-server ciphers))))
-    (when ssl-protocols
-      (.setIncludeProtocols context-server (into-array String ssl-protocols)))
-    (when exclude-protocols
+
+    (when (seq protocols)
+      (.setIncludeProtocols context-server (into-array String protocols)))
+
+    (when (seq exclude-protocols)
       (let [protocols (into-array String exclude-protocols)]
-        (if replace-exclude-protocols?
+        (if (:replace exclude-protocols)
           (.setExcludeProtocols context-server protocols)
           (.addExcludeProtocols context-server protocols))))
+
     context-server))
 
 (defn- create-https-connector
-  [server http-configuration ssl-context-factory h2? port host max-idle-time]
-  (let [secure-connection-factory (concat (when h2? [(ALPNServerConnectionFactory. "h2,http/1.1")
-                                                     (HTTP2ServerConnectionFactory. http-configuration)])
-                                          [(HttpConnectionFactory. http-configuration)])]
+  [server configuration {:keys [ssl http2 port host max-idle-time]}]
+  (let [factories (cond-> []
+                    (true? http2) (conj (ALPNServerConnectionFactory. "h2,http/1.1"))
+                    (true? http2) (conj (HTTP2ServerConnectionFactory. configuration))
+                    :always       (conj (HttpConnectionFactory. configuration)))]
     (doto (ServerConnector.
            ^Server server
-           ^SslContextFactory$Server ssl-context-factory
+           ^SslContextFactory$Server (create-ssl-context-factory ssl)
            ^"[Lorg.eclipse.jetty.server.ConnectionFactory;"
-           (into-array ConnectionFactory secure-connection-factory))
+           (into-array ConnectionFactory factories))
+
       (.setPort port)
       (.setHost host)
       (.setIdleTimeout max-idle-time))))
 
 (defn- create-http-connector
-  [server http-configuration h2c? port host max-idle-time proxy?]
-  (let [plain-connection-factories (cond-> [(HttpConnectionFactory. http-configuration)]
-                                     h2c? (concat [(HTTP2CServerConnectionFactory. http-configuration)])
-                                     proxy? (concat [(ProxyConnectionFactory.)]))]
+  [server configuration {:keys [http2c port host max-idle-time proxy]}]
+  (let [factories (cond-> [(HttpConnectionFactory. configuration)]
+                    (true? http2c) (conj (HTTP2CServerConnectionFactory. configuration))
+                    (true? proxy)  (conj (ProxyConnectionFactory.)))]
     (doto (ServerConnector.
            ^Server server
            ^"[Lorg.eclipse.jetty.server.ConnectionFactory;"
-           (into-array ConnectionFactory plain-connection-factories))
+           (into-array CoennectionFactory factories))
       (.setPort port)
       (.setHost host)
       (.setIdleTimeout max-idle-time))))
 
 (defn- create-thread-pool
-  [{:keys [job-queue max-threads min-threads thread-pool threadpool-idle-timeout daemon?]
-    :or {max-threads 200
-         min-threads 5
-         threadpool-idle-timeout 60000
-         daemon? false}}]
-  (or thread-pool
-      (doto (QueuedThreadPool. (int max-threads)
-                               (int min-threads)
-                               (int threadpool-idle-timeout)
-                               job-queue)
-        (.setDaemon daemon?))))
+  [{:keys [job-queue max-threads min-threads idle-timeout daemon]}]
+  (doto (QueuedThreadPool. (int max-threads)
+                           (int min-threads)
+                           (int idle-timeout)
+                           job-queue)
+    (.setDaemon daemon)))
 
 (defn- create-connectors
-  [server {:keys [ssl? ssl-port http? h2? h2c? max-idle-time proxy? host port]
-           :or {ssl? false
-                host "0.0.0.0"
-                port 11010
-                proxy?  false
-                http? true
-                max-idle-time 200000}
-           :as options}]
-
-  (let [config      (create-http-config options)
-        ssl?        (or ssl? ssl-port)
-        ssl-factory (create-ssl-context-factory options)]
-
+  [server {:keys [ssl http1 http2c] :as options}]
+  (let [config (create-http-config options)
+        ssl?   (:enabled ssl)
+        http?  (or http2c http1)]
     (cond-> []
-      ssl?    (conj (create-https-connector server config ssl-factory h2? ssl-port host max-idle-time))
-      http?   (conj (create-http-connector server config h2c? port host max-idle-time proxy?))
+      ssl?    (conj (create-https-connector server config options))
+      http?   (conj (create-http-connector server config options))
       :always (->> (into-array org.eclipse.jetty.server.Connector)))))
+
+(defn- create-handler
+  "Creates an instance of the final jetty handler that will be
+  attached to Server."
+  [{:keys [wrap-jetty-handler async]} handler]
+  (wrap-jetty-handler
+   (wrap-servlet-handler
+    (if async
+      (wrap-async-handler handler)
+      (wrap-handler handler)))))
+
+(defn- thread-pool?
+  [o]
+  (instance? ThreadPool o))
 
 (defn- create-server
   "Construct a Jetty Server instance."
-  [options]
-  (let [pool   (create-thread-pool options)
-        server (doto (Server. ^ThreadPool pool)
-                 (.addBean (ScheduledExecutorScheduler.)))]
-    (.setConnectors server (create-connectors server options))
-    server))
+  [{:keys [thread-pool] :as options}]
+  (let [pool (cond
+               (thread-pool? thread-pool) thread-pool
+               (map? thread-pool)         (create-thread-pool thread-pool)
+               :else                      (throw (IllegalArgumentException. "invalid thread-pool argument")))]
+    (doto (Server. ^ThreadPool pool)
+      (.addBean (ScheduledExecutorScheduler.))
+      (.setConnectors (create-connectors server options)))
 
 (defn ^Server server
   "
-  Start a Jetty webserver to serve the given handler according to the
-  supplied options:
+  Creates and confgures an instance of jetty server. This is a list of top-level options
+  that you can provide:
 
-  :http? - allow connections over HTTP
-  :port - the port to listen on (defaults to 80)
-  :host - the hostname to listen on
-  :async? - using Ring 1.6 async handler?
-  :join? - blocks the thread until server ends (defaults to true)
-  :daemon? - use daemon threads (defaults to false)
-  :ssl? - allow connections over HTTPS
-  :ssl-port - the SSL port to listen on (defaults to 443, implies :ssl?)
-  :keystore - the keystore to use for SSL connections
-  :keystore-type - the format of keystore
-  :key-password - the password to the keystore
+  :http                 - enable http1 protocol
+  :http2                - enable http2 protocol (h2) on secure socket port
+  :http2c               - enable http2 clear text (h2c) on plain socket port
+  :proxy                - enable proxy protocol on plain socket port
+
+  :port                 - the port to listen on (defaults to 11010)
+  :host                 - the hostname to listen on
+  :async                - enables the ring 1.6 async handler
+
+  :ssl                  - enables HTTPS (TLS), accepts options (see below)
+  :thread-pool          - specifies the thread pool used for jetty workloads. Can be an instance
+                          or map for configuring the default one. See below for options.
+
+  :max-idle-time        - the maximum idle time in milliseconds for a connection (default 200000)
+  :ws-max-idle-time     - the maximum idle time in milliseconds for a websocket connection (default 500000)
+  :ws-max-msg-size      - the maximum text message size in bytes for a websocket connection (default 65536)
+  :wrap-jetty-handler   - a wrapper fn that wraps default jetty handler into another,
+                          default to `identity`, not that it's not a ring middleware
+
+  The ssl options are (specified under `:ssl` option):
+
+  :port                 - the SSL/TLS port to listen on (defaults to 443)
+  :keystore             - the keystore to use for SSL connections
+  :keystore-type        - the format of keystore
+  :key-password         - the password to the keystore
   :key-manager-password - the password for key manager
-  :truststore - a truststore to use for SSL connections
-  :truststore-type - the format of trust store
-  :trust-password - the password to the truststore
-  :ssl-protocols - the ssl protocols to use, default to [\"TLSv1.3\" \"TLSv1.2\"]
-  :ssl-provider - the ssl provider, default to \"Conscrypt\"
-  :exclude-ciphers      - when :ssl? is true, additionally exclude these
-                          cipher suites
-  :exclude-protocols    - when :ssl? is true, additionally exclude these
-                          protocols
-  :replace-exclude-ciphers?   - when true, :exclude-ciphers will replace rather
-                                than add to the cipher exclusion list (defaults
-                                to false)
-  :replace-exclude-protocols? - when true, :exclude-protocols will replace
-                                rather than add to the protocols exclusion list
-                                (defaults to false)
-  :thread-pool - the thread pool for Jetty workload
-  :max-threads - the maximum number of threads to use (default 50), ignored if `:thread-pool` provided
-  :min-threads - the minimum number of threads to use (default 8), ignored if `:thread-pool` provided
-  :threadpool-idle-timeout - the maximum idle time in milliseconds for a thread (default 60000), ignored if `:thread-pool` provided
-  :job-queue - the job queue to be used by the Jetty threadpool (default is unbounded), ignored if `:thread-pool` provided
-  :max-idle-time  - the maximum idle time in milliseconds for a connection (default 200000)
-  :ws-max-idle-time  - the maximum idle time in milliseconds for a websocket connection (default 500000)
-  :ws-max-text-message-size  - the maximum text message size in bytes for a websocket connection (default 65536)
-  :client-auth - SSL client certificate authenticate, may be set to :need, :want or :none (defaults to :none)
-  :h2? - enable http2 protocol on secure socket port
-  :h2c? - enable http2 clear text on plain socket port
-  :proxy? - enable the proxy protocol on plain socket port (see http://www.eclipse.org/jetty/documentation/9.4.x/configuring-connectors.html#_proxy_protocol)
-  :wrap-jetty-handler - a wrapper fn that wraps default jetty handler into another, default to `identity`, not that it's not a ring middleware
+  :truststore           - a truststore to use for SSL connections
+  :truststore-type      - the format of trust store
+  :trust-password       - the password to the truststore
+  :protocols            - the SSL/TLS protocols to use, default to [\"TLSv1.3\" \"TLSv1.2\"]
+  :provider             - the SSL/TLS provider, default to \"Conscrypt\"
+  :exclude-ciphers      - additionally exclude these cipher suites
+  :exclude-protocols    - additionally exclude these protocols
+  :client-auth          - SSL/TLS client certificate authenticate, may be set to :need, :want
+                          or :none (defaults to :none)
+
+  Thread Pool configuration options (specified under `:thread-pool` option):
+
+  :daemon               - use daemon threads (defaults to true)
+  :max-threads          - the maximum number of threads to use (default 200)
+  :min-threads          - the minimum number of threads to use (default 5)
+  :idle-timeout         - the maximum idle time in milliseconds for a thread (default 60000)
+  :job-queue            - the job queue to be used by the Jetty threadpool (default is unbounded)
   "
-  [handler {:keys [async? wrap-jetty-handler]
-            :or {wrap-jetty-handler identity}
-            :as options}]
-  (let [server  (create-server options)
-        handler (wrap-jetty-handler
-                 (wrap-servlet-handler
-                  (if async?
-                    (wrap-async-handler handler)
-                    (wrap-handler handler))))]
-    (.setHandler ^Server server ^Handler handler)
-    server))
+  ([handler] (server handler {}))
+  ([handler options]
+   (let [options (merge base-defaults options)
+         options (cond-> options
+                   (contains? options :ssl)
+                   (update :ssl #(merge ssl-defaults %))
+
+                   (map? (:thread-pool options))
+                   (update :thread-pool #(merge thread-pool-defaults %))
+
+                   (nil? (:thread-pool options))
+                   (assoc :thread-pool thread-pool-defaults))
+
+         server  (create-server options)
+         handler (create-handler options handler)]
+     (.setHandler ^Server server ^Handler handler)
+     server)))
 
 (defn start!
   ([server] (start! server {}))
