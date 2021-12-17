@@ -27,6 +27,7 @@
 (defprotocol IWebSocket
   (send! [this msg] [this msg cb])
   (ping! [this msg] [this msg cb])
+  (pong! [this msg] [this msg cb])
   (close! [this] [this status-code reason])
   (remote-addr [this])
   (idle-timeout! [this ms])
@@ -83,6 +84,24 @@
     ([s ws] (-ping! (ByteBuffer/wrap (.getBytes s)) ws))
     ([s ws cb] (-ping! (ByteBuffer/wrap (.getBytes s)) ws cb))))
 
+
+(extend-protocol IWebSocketPong
+  (Class/forName "[B")
+  (-pong!
+    ([ba ws] (-pong! (ByteBuffer/wrap ba) ws))
+    ([ba ws cb] (-pong! (ByteBuffer/wrap ba) ws cb)))
+
+  ByteBuffer
+  (-pong!
+    ([bb ws] (-> ^WebSocketAdapter ws .getRemote (.sendPong ^ByteBuffer bb)))
+    ([bb ws cb] (-> ^WebSocketAdapter ws .getRemote (.sendPong ^ByteBuffer bb ^WriteCallback (wrap-callback cb)))))
+
+  String
+  (-pong!
+    ([s ws] (-pong! (ByteBuffer/wrap (.getBytes s)) ws))
+    ([s ws cb] (-pong! (ByteBuffer/wrap (.getBytes s)) ws cb))))
+
+
 (extend-protocol IWebSocket
   WebSocketAdapter
   (send!
@@ -91,6 +110,9 @@
   (ping!
     ([this msg] (-ping! msg this))
     ([this msg cb] (-ping! msg this cb)))
+  (pong!
+    ([this msg] (-pong! msg this))
+    ([this msg cb] (-pong! msg this cb)))
   (close! [this]
     (.. this (getSession) (close)))
   (close! [this status-code reason]

@@ -43,8 +43,6 @@
    :output-buffer-size 32768
    :request-header-size 8192
    :response-header-size 8192
-   :send-server-version-header false
-   :send-date-header false
    :header-cache-size 512
    :max-idle-time 200000
    :ws-max-idle-time 500000
@@ -120,8 +118,6 @@
   [{:keys [output-buffer-size
            request-header-size
            response-header-size
-           send-server-version-header
-           send-date-header
            header-cache-size]
     :as options}]
   (let [secure-port   (or (get-in options [:ssl :port]) (:port ssl-defaults))
@@ -132,8 +128,8 @@
       (.setOutputBufferSize output-buffer-size)
       (.setRequestHeaderSize request-header-size)
       (.setResponseHeaderSize response-header-size)
-      (.setSendServerVersion send-server-version-header)
-      (.setSendDateHeader send-date-header)
+      (.setSendServerVersion false)
+      (.setSendDateHeader false)
       (.setHeaderCacheSize header-cache-size))))
 
 (defn- ^SslContextFactory$Server create-ssl-context-factory
