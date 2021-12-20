@@ -273,9 +273,9 @@
   :host                 - the hostname to listen on
   :async                - enables the ring 1.6 async handler
 
-  :ssl                  - enables HTTPS (TLS), accepts options (see below)
+  :ssl                  - enables HTTPS (TLS), accepts a options map (see below)
   :thread-pool          - specifies the thread pool used for jetty workloads. Can be an instance
-                          or map for configuring the default one. See below for options.
+                          or options map for configuring the default one (see below).
 
   :max-idle-time        - the maximum idle time in milliseconds for a connection (default 200000)
   :ws-max-idle-time     - the maximum idle time in milliseconds for a websocket connection (default 500000)
@@ -327,12 +327,18 @@
      server)))
 
 (defn start!
+  "Starts the jetty server. It accepts an optional `options` parameter
+  that accepts the following attrs:
+
+  :join - blocks the thread until the server is starts (defaults false)
+  "
   ([server] (start! server {}))
-  ([^Server server {:keys [join?] :or {join? false}}]
+  ([^Server server {:keys [join] :or {join false}}]
    (.start ^Server server)
-   (when join? (.join ^Server server))
+   (when join (.join ^Server server))
    server))
 
 (defn stop!
+  "Stops the server."
   [^Server s]
   (.stop s))
