@@ -2,11 +2,18 @@
 
 Ring adapter for Jetty (11), with HTTP2 and WebSocket support.
 
-This package is as fork of [rj9a][1] with cleaned api (with cosmetic
+This package is as fork of [rj9a][1] with cleaned API (with cosmetic
 API changes and deprecated API removal). Additionally, it does not
 depends on ring-servlet and uses the latest jakarta (not javax)
 servlet API (look at [jetty10vs11][2] for more info). Many thanks to
 @sunng87 for all the work on the original rj9a adatper.
+
+**NOTE:** this adapter is intended to be used under a http proxy for
+TLS offloding (such that NGINX or HAPROXY); this is the reason there
+are no options for configure SSL/TLS. This is a practical decission to
+not maintain code that is almost never used on our own use cases; and
+if you really need TLS handled from the JVM you can always use the
+[rj9a][1] or the default ring jetty adapter.
 
 [1]: https://github.com/sunng87/ring-jetty9-adapter
 [2]: https://webtide.com/jetty-10-and-11-have-arrived
@@ -15,14 +22,14 @@ It requires JDK >= 11.
 
 ## Usage
 
+### Quick Start
+
 On deps.edn:
 
 ```clojure
 funcool/yetti {:git/tag "v1.0" :git/sha "e3d7794"
                :git/url "https://github.com/funcool/yetti.git"}
 ```
-
-### Code
 
 In the REPL:
 
@@ -36,6 +43,8 @@ In the REPL:
 
 ### Ring Async handler
 
+This adapter also supports the ring (>=1.6) async handlers:
+
 ```clojure
 (require '[yetti.adapter :as yt])
 
@@ -44,25 +53,24 @@ In the REPL:
   (send-response {:body "It works!"}))
 
 (-> app
-    (yt/server {:port 11010 :async? true})
+    (yt/server {:port 11010 :ring/async true})
     (yt/start!))
 ```
 
 ### HTTP/2
 
-To enable HTTP/2 on cleartext and secure transport, you can simply add
-options to `server` like:
+To enable HTTP/2 on cleartext , you can simply add options to `server`
+like:
 
 ```clojure
 (yt/server app {:port 11010
-                :h2c? true  ;; enable cleartext http/2
-                :h2? true   ;; enable http/2
-                :ssl? true  ;; ssl is required for http/2
-                :ssl-port 11011
-                :keystore "dev/keystore.jks"
-                :key-password "111111"
-                :keystore-type "jks"})
+                :http2c? true  ;; enable cleartext http/2
+                })
 ```
+
+The http2 on secure layer (TLS) is not supported, this package is
+intended to be used with TLS offloding layer such that NGINX or
+HAPROXY.
 
 ### WebSocket
 
@@ -91,6 +99,8 @@ IWebSocket protocol allows you to read and write data on the `ws` value:
 * `(yws/send! ws msg callback)`
 * `(yws/ping! ws msg)`
 * `(yws/ping! ws msg callback)`
+* `(yws/pong! ws msg)`
+* `(yws/pong! ws msg callback)`
 * `(yws/close! ws)`
 * `(yws/remote-addr ws)`
 * `(yws/idle-timeout! ws timeout)`
@@ -98,17 +108,16 @@ IWebSocket protocol allows you to read and write data on the `ws` value:
 Notice that we support different type of msg:
 
 * **byte[]** and **ByteBuffer**: send binary websocket message
-* **String** and other Object: send text websocket message
-* **(fn [ws])** (clojure function): Custom function you can operate on Jetty's [RemoteEndpoint][3]
+* **String**: send text websocket message
+* **fn**: custom function you can operate on Jetty's [RemoteEndpoint][3]
 
 [3]: https://www.eclipse.org/jetty/javadoc/jetty-11/org/eclipse/jetty/websocket/api/RemoteEndpoint.html
 
-A callback can also be specified for `send!`:
+A callback can also be specified for `send!`, `ping!` or `pong!`:
 
 ```clojure
 (yws/send! ws msg (fn [err])
 ;; The `err` is null if operation terminates successfuly
-
 ```
 
 ## License

@@ -66,11 +66,6 @@
   (let [length (.getContentLength request)]
     (if (>= length 0) length)))
 
-(defn get-client-cert
-  "Returns the SSL client certificate of the request, if one exists."
-  [^HttpServletRequest request]
-  (first (.getAttribute request "jakarta.servlet.request.X509Certificate")))
-
 (defn build-request-map
   "Create the request map from the HttpServletRequest object."
   [^HttpServletRequest request]
@@ -86,7 +81,7 @@
    :content-type       (.getContentType request)
    :content-length     (get-content-length request)
    :character-encoding (.getCharacterEncoding request)
-   :ssl-client-cert    (get-client-cert request)
+   :ssl-client-cert    nil
    :body               (.getInputStream request)})
 
 (defn set-headers!

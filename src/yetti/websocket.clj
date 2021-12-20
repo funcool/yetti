@@ -39,6 +39,9 @@
 (defprotocol IWebSocketPing
   (-ping! [x ws] [x ws cb] "How to encode bytes sent with a ping"))
 
+(defprotocol IWebSocketPong
+  (-pong! [x ws] [x ws cb] "How to encode bytes sent with a pong"))
+
 (def ^:private no-op (constantly nil))
 
 (defn wrap-callback
@@ -174,14 +177,14 @@
 (defn upgrade-websocket
   ([req res ws options] (upgrade-websocket req res nil ws options))
   ([^HttpServletRequest req ^HttpServletResponse res ^AsyncContext async-context ws
-    {:keys [ws-max-idle-time
-            ws-max-text-message-size]
-     :or {ws-max-idle-time 500000
-          ws-max-text-message-size 65536}}]
+    {:keys [:websocket/idle-timeout
+            :websocket/max-text-msg-size
+            :websocket/max-binary-msg-size]}]
    (let [creator   (create-websocket-creator ws)
          container (JettyWebSocketServerContainer/getContainer (.getServletContext req))]
-     (.setIdleTimeout container (Duration/ofMillis ws-max-idle-time))
-     (.setMaxTextMessageSize container ws-max-text-message-size)
+     (.setIdleTimeout container (Duration/ofMillis idle-timeout))
+     (.setMaxTextMessageSize container max-text-msg-size)
+     (.setMaxBinaryMessageSize container max-binary-msg-size)
      (.upgrade container creator req res)
      (when async-context
        (.complete async-context)))))
