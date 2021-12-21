@@ -27,6 +27,7 @@
 (defprotocol IWebSocket
   (send! [this msg] [this msg cb])
   (ping! [this msg] [this msg cb])
+  (pong! [this msg] [this msg cb])
   (close! [this] [this status-code reason])
   (remote-addr [this])
   (idle-timeout! [this ms])
@@ -37,6 +38,9 @@
 
 (defprotocol IWebSocketPing
   (-ping! [x ws] [x ws cb] "How to encode bytes sent with a ping"))
+
+(defprotocol IWebSocketPong
+  (-pong! [x ws] [x ws cb] "How to encode bytes sent with a pong"))
 
 (def ^:private no-op (constantly nil))
 
@@ -83,6 +87,24 @@
     ([s ws] (-ping! (ByteBuffer/wrap (.getBytes s)) ws))
     ([s ws cb] (-ping! (ByteBuffer/wrap (.getBytes s)) ws cb))))
 
+
+(extend-protocol IWebSocketPong
+  (Class/forName "[B")
+  (-pong!
+    ([ba ws] (-pong! (ByteBuffer/wrap ba) ws))
+    ([ba ws cb] (-pong! (ByteBuffer/wrap ba) ws cb)))
+
+  ByteBuffer
+  (-pong!
+    ([bb ws] (-> ^WebSocketAdapter ws .getRemote (.sendPong ^ByteBuffer bb)))
+    ([bb ws cb] (-> ^WebSocketAdapter ws .getRemote (.sendPong ^ByteBuffer bb ^WriteCallback (wrap-callback cb)))))
+
+  String
+  (-pong!
+    ([s ws] (-pong! (ByteBuffer/wrap (.getBytes s)) ws))
+    ([s ws cb] (-pong! (ByteBuffer/wrap (.getBytes s)) ws cb))))
+
+
 (extend-protocol IWebSocket
   WebSocketAdapter
   (send!
@@ -91,6 +113,9 @@
   (ping!
     ([this msg] (-ping! msg this))
     ([this msg cb] (-ping! msg this cb)))
+  (pong!
+    ([this msg] (-pong! msg this))
+    ([this msg cb] (-pong! msg this cb)))
   (close! [this]
     (.. this (getSession) (close)))
   (close! [this status-code reason]
@@ -152,14 +177,14 @@
 (defn upgrade-websocket
   ([req res ws options] (upgrade-websocket req res nil ws options))
   ([^HttpServletRequest req ^HttpServletResponse res ^AsyncContext async-context ws
-    {:keys [ws-max-idle-time
-            ws-max-text-message-size]
-     :or {ws-max-idle-time 500000
-          ws-max-text-message-size 65536}}]
+    {:keys [:websocket/idle-timeout
+            :websocket/max-text-msg-size
+            :websocket/max-binary-msg-size]}]
    (let [creator   (create-websocket-creator ws)
          container (JettyWebSocketServerContainer/getContainer (.getServletContext req))]
-     (.setIdleTimeout container (Duration/ofMillis ws-max-idle-time))
-     (.setMaxTextMessageSize container ws-max-text-message-size)
+     (.setIdleTimeout container (Duration/ofMillis idle-timeout))
+     (.setMaxTextMessageSize container max-text-msg-size)
+     (.setMaxBinaryMessageSize container max-binary-msg-size)
      (.upgrade container creator req res)
      (when async-context
        (.complete async-context)))))

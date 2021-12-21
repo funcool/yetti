@@ -1,7 +1,6 @@
-;; This code is derived from the ring-servlet package with not
-;; necessary for `yetti` package removed. It is not possible to use
-;; the ring-servlet package directly because of the javax to jakarta
-;; java package name change.
+;; This code is derived from the ring-servlet package and adapted
+;; yetti needs. It is not possible to use the ring-servlet package
+;; directly because of the javax to jakarta java package name change.
 ;;
 ;; Copyright (c) 2021-Now Andrey Antukh
 ;; EPL-1.0 License.
@@ -66,11 +65,6 @@
   (let [length (.getContentLength request)]
     (if (>= length 0) length)))
 
-(defn get-client-cert
-  "Returns the SSL client certificate of the request, if one exists."
-  [^HttpServletRequest request]
-  (first (.getAttribute request "jakarta.servlet.request.X509Certificate")))
-
 (defn build-request-map
   "Create the request map from the HttpServletRequest object."
   [^HttpServletRequest request]
@@ -86,7 +80,7 @@
    :content-type       (.getContentType request)
    :content-length     (get-content-length request)
    :character-encoding (.getCharacterEncoding request)
-   :ssl-client-cert    (get-client-cert request)
+   :ssl-client-cert    nil
    :body               (.getInputStream request)})
 
 (defn set-headers!

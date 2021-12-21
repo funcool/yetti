@@ -1,12 +1,10 @@
 {:paths ["src"]
  :deps
  {org.eclipse.jetty/jetty-server {:mvn/version "11.0.7"}
-  org.eclipse.jetty/jetty-alpn-server {:mvn/version "11.0.7"}
-  org.eclipse.jetty/jetty-alpn-java-server {:mvn/version "11.0.7"}
+  org.eclipse.jetty.http2/http2-server {:mvn/version "11.0.7"}
   org.eclipse.jetty.websocket/websocket-jetty-api {:mvn/version "11.0.7"}
   org.eclipse.jetty.websocket/websocket-jetty-server {:mvn/version "11.0.7"}
   org.eclipse.jetty.websocket/websocket-servlet {:mvn/version "11.0.7"}
-  org.eclipse.jetty.http2/http2-server {:mvn/version "11.0.7"}
   ring/ring-core {:mvn/version "1.9.4"}}
 
  :aliases
@@ -16,7 +14,10 @@
     org.clojure/clojure {:mvn/version "1.11.0-alpha3"}
     org.clojure/test.check {:mvn/version "RELEASE"}
     com.bhauman/rebel-readline {:mvn/version "RELEASE"}
-    criterium/criterium {:mvn/version "RELEASE"}}
+    clj-http/clj-http {:mvn/version "3.12.3"}
+    criterium/criterium {:mvn/version "RELEASE"}
+    org.slf4j/slf4j-nop {:mvn/version "RELEASE"}}
+
    :extra-paths ["test" "dev"]}
 
   :build
