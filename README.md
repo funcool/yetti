@@ -59,7 +59,7 @@ that you can provide:
 :thread-pool/idle-timeout      ;; the max idle time in milliseconds for a thread (default 60000)
 :thread-pool/job-queue         ;; the job queue to be used by the Jetty threadpool (default is unbounded)
 :thread-pool/instance          ;; specifies the thread pool used for jetty workloads. If you specifies
-                                  this option, all the other will be ignored.
+                               ;; this option, all the other will be ignored.
 
 :http/protocols                ;; a set of enabled protocols #{:h1 :h2c :proxy} (defaults to #{:h1 :h2c})
 :http/port                     ;; the port to listen on (defaults to 11010)
@@ -71,7 +71,7 @@ that you can provide:
 :websocket/max-binary-msg-size ;; the max binary message size in bytes for a websocket connection (default 65536)
 
 :jetty/wrap-handler            ;; a wrapper fn that wraps default jetty handler into another, default to
-                                  the `identity` fn, note that it's not a ring middleware
+                               ;; the `identity` fn, note that it's not a ring middleware
 ```
 
 ### Ring Async
