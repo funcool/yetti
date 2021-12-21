@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-export OPTIONS="-A:dev -J-XX:+UseShenandoahGC -J-XX:-OmitStackTraceInFastThrow -J-Xms50m -J-Xmx512m -J-Djdk.attach.allowAttachSelf -J-XX:+UnlockDiagnosticVMOptions -J-XX:+DebugNonSafepoints -J-Djava.net.preferIPv4Stack=true -J-Djetty.sslContext.sniRequired=false -J-Djetty.ssl.sniRequired=false -J-Djetty.ssl.sniHostCheck=false";
+export OPTIONS="-A:dev -J-XX:+UseShenandoahGC -J-XX:-OmitStackTraceInFastThrow -J-Xms50m -J-Xmx512m -J-Djdk.attach.allowAttachSelf -J-XX:+UnlockDiagnosticVMOptions -J-XX:+DebugNonSafepoints -J-Djava.net.preferIPv4Stack=true";
 
 export OPTIONS_EVAL="nil"
 

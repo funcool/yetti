@@ -1,16 +1,21 @@
 (ns yetti-test
   (:require
-   [clojure.test :refer :all]
-   [yetti.adapter :as yt]
    [clj-http.client :as http]
    [clojure.java.io :as io]
-   [ring.core.protocols :as p])
+   [clojure.test :refer :all]
+   [ring.core.protocols :as p]
+   [yetti.adapter :as yt])
   (:import
-   [org.eclipse.jetty.util.thread QueuedThreadPool]
-   [org.eclipse.jetty.server Server Request]
-   [java.net ServerSocket ConnectException]
-   [java.io SequenceInputStream ByteArrayInputStream InputStream IOException]
-   [org.apache.http MalformedChunkCodingException]))
+   java.io.ByteArrayInputStream
+   java.io.IOException
+   java.io.InputStream
+   java.io.SequenceInputStream
+   java.net.ConnectException
+   java.net.ServerSocket
+   org.apache.http.MalformedChunkCodingException
+   org.eclipse.jetty.server.Request
+   org.eclipse.jetty.server.Server
+   org.eclipse.jetty.util.thread.QueuedThreadPool))
 
 (defn- hello-world [request]
   {:status  200
@@ -52,25 +57,11 @@
 
 (deftest test-http-server
   (with-server hello-world {:http/port test-port}
-    ;; (Thread/sleep 10000000)
-
     (let [response (http/get test-url)]
       (is (= (:status response) 200))
       (is (.startsWith (get-in response [:headers "content-type"])
                        "text/plain"))
       (is (= (:body response) "Hello World")))))
-
-;;   (testing "HTTPS-only server"
-;;     (with-server hello-world {:http? false
-;;                               :http/port test-port
-;;                               :ssl-port test-ssl-port
-;;                               :keystore "test/keystore.jks"
-;;                               :key-password "password"}
-;;       (let [response (http/get test-ssl-url {:insecure? true})]
-;;         (is (= (:status response) 200))
-;;         (is (= (:body response) "Hello World")))
-;;       (is (thrown-with-msg? ConnectException #"Connection refused"
-;;                             (http/get test-url)))))
 
 (deftest test-daemon-threads
   (testing "default (daemon off)"
@@ -328,26 +319,26 @@
           (is (= (:status response)
                  500)))))))
 
-;; (def call-count (atom 0))
+(def call-count (atom 0))
 
-;; (defn- broken-handler [request]
-;;   (swap! call-count inc)
-;;   (throw (ex-info "unhandled exception" {})))
+(defn- broken-handler [request]
+  (swap! call-count inc)
+  (throw (ex-info "unhandled exception" {})))
 
-;; (defn- broken-handler-cps [request respond raise]
-;;   (swap! call-count inc)
-;;   (raise (ex-info "unhandled exception" {})))
+(defn- broken-handler-cps [request respond raise]
+  (swap! call-count inc)
+  (raise (ex-info "unhandled exception" {})))
 
-;; (testing "broken handler is only called once"
-;;   (reset! call-count 0)
-;;   (with-server broken-handler {:http/port test-port}
-;;     (try (http/get test-url)
-;;       (catch Exception _ nil))
-;;     (is (= 1 @call-count))))
+(testing "broken handler is only called once"
+  (reset! call-count 0)
+  (with-server broken-handler {:http/port test-port}
+    (try (http/get test-url)
+      (catch Exception _ nil))
+    (is (= 1 @call-count))))
 
-;; (testing "broken async handler is only called once"
-;;   (reset! call-count 0)
-;;   (with-server broken-handler-cps {:ring/async true :http/port test-port}
-;;     (try (http/get test-url)
-;;       (catch Exception _ nil))
-;;     (is (= 1 @call-count))))
+(testing "broken async handler is only called once"
+  (reset! call-count 0)
+  (with-server broken-handler-cps {:ring/async true :http/port test-port}
+    (try (http/get test-url)
+      (catch Exception _ nil))
+    (is (= 1 @call-count))))

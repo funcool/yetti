@@ -190,8 +190,8 @@
   :thread-pool/min-threads       - the min number of threads to use (default 5)
   :thread-pool/idle-timeout      - the max idle time in milliseconds for a thread (default 60000)
   :thread-pool/job-queue         - the job queue to be used by the Jetty threadpool (default is unbounded)
-  :thread-pool/instance          - specifies the thread pool used for jetty workloads. Can be an instance
-                                   or options map for configuring the default one (see below).
+  :thread-pool/instance          - specifies the thread pool used for jetty workloads. If you specifies
+                                   this option, all the other will be ignored.
 
   :http/protocols                - a set of enabled protocols #{:h1 :h2c :proxy} (defaults to #{:h1 :h2c})
   :http/port                     - the port to listen on (defaults to 11010)
