@@ -40,9 +40,9 @@
 
    :ring/async false
 
-   :websockes/idle-timeut 500000
-   :websockes/max-text-msg-size 65536
-   :websockes/max-binary-msg-size 65536
+   :websocket/idle-timeout 500000
+   :websocket/max-text-msg-size 65536
+   :websocket/max-binary-msg-size 65536
 
    :thread-pool/max-threads 200
    :thread-pool/min-threads 5

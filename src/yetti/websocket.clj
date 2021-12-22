@@ -220,6 +220,7 @@
   (let [ws-handler (cond (map? ws-handler) (constantly ws-handler)
                          (fn? ws-handler)  ws-handler
                          :else             (throw (IllegalArgumentException. "ws-handler should be a map or fn")))]
+
     {:status 101 ;; http 101 switching protocols
      :headers {"upgrade" "websocket"
                "connection" "upgrade"}
