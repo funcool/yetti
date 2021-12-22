@@ -29,7 +29,7 @@ It requires JDK >= 11.
 On deps.edn:
 
 ```clojure
-funcool/yetti {:git/tag "v2.0" :git/sha "b0cd122"
+funcool/yetti {:git/tag "v2.1" :git/sha "97bf73a"
                :git/url "https://github.com/funcool/yetti.git"}
 ```
 
