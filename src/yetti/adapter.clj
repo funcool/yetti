@@ -9,6 +9,7 @@
    org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory
    org.eclipse.jetty.server.ConnectionFactory
    org.eclipse.jetty.server.Connector
+   org.eclipse.jetty.server.ForwardedRequestCustomizer
    org.eclipse.jetty.server.Handler
    org.eclipse.jetty.server.HttpConfiguration
    org.eclipse.jetty.server.HttpConnectionFactory
@@ -33,6 +34,7 @@
    :http/request-header-size 8192
    :http/response-header-size 8192
    :http/header-cache-size 512
+   :http/handle-forwarded false
    :http/port 11010
    :http/host "localhost"
    :http/protocols #{:h1 :h2c}
@@ -105,11 +107,13 @@
 (defn- create-http-config
   "Creates jetty http configurator"
   [{:keys [:http/output-buffer-size
+           :http/handle-forwarded
            :http/request-header-size
            :http/response-header-size
            :http/header-cache-size]}]
   (doto (HttpConfiguration.)
     ;; (.setSecurePort secure-port)
+    (cond-> handle-forwarded (.addCustomizer (ForwardedRequestCustomizer.)))
     (.setSecureScheme "https")
     (.setOutputBufferSize output-buffer-size)
     (.setRequestHeaderSize request-header-size)
