@@ -28,7 +28,7 @@ adatper.
 On deps.edn:
 
 ```clojure
-funcool/yetti {:git/tag "v2.2" :git/sha "68c6e61"
+funcool/yetti {:git/tag "v3.0" :git/sha "8fc734f"
                :git/url "https://github.com/funcool/yetti.git"}
 ```
 
