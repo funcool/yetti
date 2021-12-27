@@ -3,6 +3,7 @@
    [yetti.util :as util]
    [yetti.websocket :as ws])
   (:import
+   yetti.util.HandlerWrapper
    javax.servlet.AsyncContext
    javax.servlet.http.HttpServletRequest
    javax.servlet.http.HttpServletResponse
@@ -14,19 +15,13 @@
    org.eclipse.jetty.server.HttpConfiguration
    org.eclipse.jetty.server.HttpConnectionFactory
    org.eclipse.jetty.server.ProxyConnectionFactory
-   org.eclipse.jetty.server.Request
    org.eclipse.jetty.server.Server
    org.eclipse.jetty.server.ServerConnector
-   org.eclipse.jetty.server.handler.AbstractHandler
-   org.eclipse.jetty.server.handler.HandlerList
-   org.eclipse.jetty.servlet.ServletContextHandler
-   org.eclipse.jetty.servlet.ServletHolder
    org.eclipse.jetty.util.thread.QueuedThreadPool
    org.eclipse.jetty.util.thread.ScheduledExecutorScheduler
-   org.eclipse.jetty.util.thread.ThreadPool
-   org.eclipse.jetty.websocket.server.config.JettyWebSocketServletContainerInitializer))
+   org.eclipse.jetty.util.thread.ThreadPool))
 
-;; (set! *warn-on-reflection* true)
+(set! *warn-on-reflection* true)
 
 (def base-defaults
   {:jetty/wrap-handler identity
@@ -56,53 +51,31 @@
   [{:keys [status ws]}]
   (and (= 101 status) ws))
 
-(defn- wrap-servlet-handler
-  "Wraps a Jetty handler in a ServletContextHandler.
-
-   Websocket upgrades require a servlet context which makes it
-   necessary to wrap the handler in a servlet context handler."
-  [handler]
-  (doto (ServletContextHandler.)
-    (.setContextPath "/*")
-    (.setAllowNullPathInfo true)
-    (JettyWebSocketServletContainerInitializer/configure nil)
-    (.setHandler handler)))
-
 (defn- wrap-handler
   "Returns an Jetty Handler implementation for the given Ring handler."
   [handler options]
-  (proxy [AbstractHandler] []
-    (handle [_ ^Request base-request ^HttpServletRequest request ^HttpServletResponse response]
-      (try
-        (let [request-map  (util/build-request-map request)
-              response-map (handler request-map)]
-          (when response-map
-            (if (websocket-upgrade? response-map)
-              (ws/upgrade-websocket request response (:ws response-map) options)
-              (util/update-servlet-response response response-map))))
-        (catch Throwable e
-          (.sendError response 500 (.getMessage e)))
-        (finally
-          (.setHandled base-request true))))))
+  (fn [^HttpServletRequest request ^HttpServletResponse response]
+    (let [request-map  (util/build-request-map request)
+          response-map (handler request-map)]
+      (when response-map
+        (if (websocket-upgrade? response-map)
+          (ws/upgrade-websocket request response (:ws response-map) options)
+          (util/update-servlet-response response response-map))))))
 
 (defn- wrap-async-handler
   "Returns an Jetty Handler implementation for the given Ring **async** handler."
   [handler options]
-  (proxy [AbstractHandler] []
-    (handle [_ ^Request base-request ^HttpServletRequest request ^HttpServletResponse response]
-      (try
-        (let [^AsyncContext context (.startAsync request)]
-          (.setTimeout context (:http/idle-timeout options))
-          (handler (util/build-request-map request)
-                   (fn [response-map]
-                     (if (websocket-upgrade? response-map)
-                       (ws/upgrade-websocket request response context (:ws response-map) options)
-                       (util/update-servlet-response response context response-map)))
-                   (fn [^Throwable exception]
-                     (.sendError response 500 (.getMessage exception))
-                     (.complete context))))
-        (finally
-          (.setHandled base-request true))))))
+  (fn [^HttpServletRequest request ^HttpServletResponse response]
+    (let [^AsyncContext context (.startAsync request)]
+      (.setTimeout context (:http/idle-timeout options))
+      (handler (util/build-request-map request)
+               (fn [response-map]
+                 (if (websocket-upgrade? response-map)
+                   (ws/upgrade-websocket request response context (:ws response-map) options)
+                   (util/update-servlet-response response context response-map)))
+               (fn [^Throwable exception]
+                 (.sendError response 500 (.getMessage exception))
+                 (.complete context))))))
 
 (defn- create-http-config
   "Creates jetty http configurator"
@@ -163,7 +136,7 @@
   [{:keys [:ring/async ::handler] :as options}]
   (let [wrap-jetty-handler (:jetty/wrap-handler options)]
     (wrap-jetty-handler
-     (wrap-servlet-handler
+     (HandlerWrapper/wrap
       (if async
         (wrap-async-handler handler options)
         (wrap-handler handler options))))))

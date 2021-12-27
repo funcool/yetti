@@ -33,3 +33,25 @@
   {:status 200
    :headers {"content-type" "text/plain"}
    :body "Hello world\n"})
+
+(def server nil)
+
+(defn- start
+  []
+  (alter-var-root #'server (fn [server]
+                             (when server (yt/stop! server))
+                             (-> (yt/server hello-world-handler)
+                                 (yt/start!))))
+  :started)
+
+(defn- stop
+  []
+  (alter-var-root #'server (fn [server]
+                             (when server (yt/stop! server))
+                             nil))
+  :stoped)
+
+(defn restart
+  []
+  (stop)
+  (repl/refresh :after 'user/start))
