@@ -1,26 +1,25 @@
-# Jetty (11) adapter for Ring
+# Jetty (10) adapter for Ring
 
-Ring adapter for Jetty (11), with HTTP2C and WebSocket support.
+Ring adapter for Jetty (10), with HTTP2C and WebSocket support.
 
-This package is as fork of [rj9a][1] with reduced/simplified API.
+This package is as fork of [rj9a][1]. This fork is focused on have a
+cleaned API (no need to maintain backward compatibility with previous
+versions of [rj9a][1]) and focused on performance.
 
-The main difference with the original is that it does not depends on
-ring-servlet and uses the latest jakarta (not javax) servlet API (look
-at [jetty10vs11][2] for more info). It also removes legacy code and
-simplifies internal implementation. Many thanks to @sunng87 for all
-the work on the original rj9a adatper.
-
-**NOTE:** this adapter is intended to be used under a http proxy for
-TLS offloding (such that NGINX or HAPROXY); this is the reason there
-are no options for configure SSL/TLS. This is a practical decission to
-not maintain code that is almost never used on our own use cases; and
-if you really need TLS handled from the JVM you can always use the
+This adapter is intended to be used under a http proxy for TLS
+offloding (such that NGINX or HAPROXY); this is the reason there are
+no options for configure SSL/TLS. This is a practical decission to not
+maintain code that is almost never used on our own use cases; and if
+you really need TLS handled from the JVM you can always use the
 [rj9a][1] or the default ring jetty adapter.
 
-[1]: https://github.com/sunng87/ring-jetty9-adapter
-[2]: https://webtide.com/jetty-10-and-11-have-arrived
-
 It requires JDK >= 11.
+
+[1]: https://github.com/sunng87/ring-jetty9-adapter
+
+Many thanks to @sunng87 for all the work on the original [rj9a][1]
+adatper.
+
 
 ## Usage
 
@@ -151,6 +150,33 @@ A callback can also be specified for `send!`, `ping!` or `pong!`:
 (yws/send! ws msg (fn [err])
 ;; The `err` is null if operation terminates successfuly
 ```
+
+
+## FAQ
+
+### Why don't use jetty 11?
+
+Initially we have tried to use the jetty-11, but we rolled back to
+10.x branch because the ring multipart parsing depends on a library
+that depends on the servlet api (pre jakarta, javax).
+
+Right now the adapter is 100% compatible with latest servlet API
+(exposed under jakarta. package), you just need to rename javax to
+jakarta.
+
+And on the end, jetty-11 is the same code as jetty-10 but with javax
+renamed to jakarta (see more on [jetty10v11][2]). Until we find a
+multipart parsing library that does not depends on javax api we will
+use the jetty-10 branch.
+
+[2]: https://webtide.com/jetty-10-and-11-have-arrived
+
+### Why not contribute back to [rj9a][1]?
+
+We already do it when it make sense. But some changes implies breaking
+user code and we don't want it. Making a new package, opens the window
+to break API and build a new one. This is the one of the main reason
+behind this package.
 
 ## License
 

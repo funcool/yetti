@@ -7,10 +7,10 @@
    java.nio.ByteBuffer
    java.time.Duration
    java.util.Locale
-   jakarta.servlet.AsyncContext
-   jakarta.servlet.http.HttpServlet
-   jakarta.servlet.http.HttpServletRequest
-   jakarta.servlet.http.HttpServletResponse
+   javax.servlet.AsyncContext
+   javax.servlet.http.HttpServlet
+   javax.servlet.http.HttpServletRequest
+   javax.servlet.http.HttpServletResponse
    org.eclipse.jetty.servlet.ServletHolder
    org.eclipse.jetty.websocket.api.RemoteEndpoint
    org.eclipse.jetty.websocket.api.Session

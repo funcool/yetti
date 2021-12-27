@@ -3,9 +3,9 @@
    [yetti.util :as util]
    [yetti.websocket :as ws])
   (:import
-   jakarta.servlet.AsyncContext
-   jakarta.servlet.http.HttpServletRequest
-   jakarta.servlet.http.HttpServletResponse
+   javax.servlet.AsyncContext
+   javax.servlet.http.HttpServletRequest
+   javax.servlet.http.HttpServletResponse
    org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory
    org.eclipse.jetty.server.ConnectionFactory
    org.eclipse.jetty.server.Connector

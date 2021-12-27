@@ -36,9 +36,9 @@
    [clojure.string :as str]
    [ring.core.protocols :as rp])
   (:import
-   jakarta.servlet.AsyncContext
-   jakarta.servlet.http.HttpServletRequest
-   jakarta.servlet.http.HttpServletResponse
+   javax.servlet.AsyncContext
+   javax.servlet.http.HttpServletRequest
+   javax.servlet.http.HttpServletResponse
    java.io.File
    java.io.FileInputStream
    java.io.InputStream
