@@ -1,6 +1,8 @@
 # Jetty (10) adapter for Ring
 
-Ring adapter for Jetty (10), with HTTP2C and WebSocket support.
+[Ring](https://github.com/ring-clojure/ring) adapter for [Jetty
+(10)](https://www.eclipse.org/jetty/), with
+HTTP2C and WebSocket support.
 
 This package is as fork of [rj9a][1]. This fork is focused on have a
 cleaned API (no need to maintain backward compatibility with previous
@@ -22,6 +24,11 @@ adatper.
 
 
 ## Usage
+
+### Reference
+
+See official [Ring documentation](https://github.com/ring-clojure/ring#documentation).
+
 
 ### Quick Start
 
