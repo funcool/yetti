@@ -5,6 +5,7 @@
   (:import
    yetti.util.HandlerWrapper
    javax.servlet.AsyncContext
+   javax.servlet.ServletContext
    javax.servlet.http.HttpServletRequest
    javax.servlet.http.HttpServletResponse
    org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory
@@ -59,23 +60,25 @@
           response-map (handler request-map)]
       (when response-map
         (if (websocket-upgrade? response-map)
-          (ws/upgrade-websocket request response (:ws response-map) options)
+          (let [^ServerContext servlet-context (.getServletContext request)]
+            (ws/upgrade-websocket request response servlet-context (:ws response-map) options))
           (util/update-servlet-response response response-map))))))
 
 (defn- wrap-async-handler
   "Returns an Jetty Handler implementation for the given Ring **async** handler."
   [handler options]
   (fn [^HttpServletRequest request ^HttpServletResponse response]
-    (let [^AsyncContext context (.startAsync request)]
-      (.setTimeout context (:http/idle-timeout options))
+    (let [^AsyncContext async-context (.startAsync request)
+          ^ServerContext servlet-context (.getServletContext request)]
+      (.setTimeout async-context (:http/idle-timeout options))
       (handler (util/build-request-map request)
                (fn [response-map]
                  (if (websocket-upgrade? response-map)
-                   (ws/upgrade-websocket request response context (:ws response-map) options)
-                   (util/update-servlet-response response context response-map)))
+                   (ws/upgrade-websocket request response async-context servlet-context (:ws response-map) options)
+                   (util/update-servlet-response response async-context response-map)))
                (fn [^Throwable exception]
                  (.sendError response 500 (.getMessage exception))
-                 (.complete context))))))
+                 (.complete async-context))))))
 
 (defn- create-http-config
   "Creates jetty http configurator"

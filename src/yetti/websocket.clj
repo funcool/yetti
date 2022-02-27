@@ -8,6 +8,7 @@
    java.time.Duration
    java.util.Locale
    javax.servlet.AsyncContext
+   javax.servlet.ServletContext
    javax.servlet.http.HttpServlet
    javax.servlet.http.HttpServletRequest
    javax.servlet.http.HttpServletResponse
@@ -175,13 +176,17 @@
             (create-websocket-adapter handlers)))))))
 
 (defn upgrade-websocket
-  ([req res ws options] (upgrade-websocket req res nil ws options))
-  ([^HttpServletRequest req ^HttpServletResponse res ^AsyncContext async-context ws
+  ([req res sctx ws options] (upgrade-websocket req res nil sctx ws options))
+  ([^HttpServletRequest req
+    ^HttpServletResponse res
+    ^AsyncContext async-context
+    ^ServletContext servlet-context
+    ^clojure.lang.IFn ws
     {:keys [:websocket/idle-timeout
             :websocket/max-text-msg-size
             :websocket/max-binary-msg-size]}]
    (let [creator   (create-websocket-creator ws)
-         container (JettyWebSocketServerContainer/getContainer (.getServletContext req))]
+         container (JettyWebSocketServerContainer/getContainer servlet-context)]
      (.setIdleTimeout container (Duration/ofMillis idle-timeout))
      (.setMaxTextMessageSize container max-text-msg-size)
      (.setMaxBinaryMessageSize container max-binary-msg-size)
