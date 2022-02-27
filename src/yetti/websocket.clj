@@ -176,23 +176,18 @@
             (create-websocket-adapter handlers)))))))
 
 (defn upgrade-websocket
-  ([req res sctx ws options] (upgrade-websocket req res nil sctx ws options))
-  ([^HttpServletRequest req
-    ^HttpServletResponse res
-    ^AsyncContext async-context
-    ^ServletContext servlet-context
-    ^clojure.lang.IFn ws
-    {:keys [:websocket/idle-timeout
-            :websocket/max-text-msg-size
-            :websocket/max-binary-msg-size]}]
-   (let [creator   (create-websocket-creator ws)
-         container (JettyWebSocketServerContainer/getContainer servlet-context)]
-     (.setIdleTimeout container (Duration/ofMillis idle-timeout))
-     (.setMaxTextMessageSize container max-text-msg-size)
-     (.setMaxBinaryMessageSize container max-binary-msg-size)
-     (.upgrade container creator req res)
-     (when async-context
-       (.complete async-context)))))
+  [^HttpServletRequest req
+   ^HttpServletResponse res
+   ^clojure.lang.IFn ws
+   {:keys [:websocket/idle-timeout
+           :websocket/max-text-msg-size
+           :websocket/max-binary-msg-size]}]
+  (let [creator   (create-websocket-creator ws)
+        container (JettyWebSocketServerContainer/getContainer (.getServletContext req))]
+    (.setIdleTimeout container (Duration/ofMillis idle-timeout))
+    (.setMaxTextMessageSize container max-text-msg-size)
+    (.setMaxBinaryMessageSize container max-binary-msg-size)
+    (.upgrade container creator req res)))
 
 (defn upgrade-request?
   "Checks if a request is a websocket upgrade request."

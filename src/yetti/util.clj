@@ -36,21 +36,18 @@
    [clojure.string :as str]
    [ring.core.protocols :as rp])
   (:import
-   javax.servlet.AsyncContext
    javax.servlet.http.HttpServletRequest
    javax.servlet.http.HttpServletResponse
-   java.io.File
-   java.io.FileInputStream
    java.io.InputStream
    java.util.Locale))
 
-;; (set! *warn-on-reflection* true)
+(set! *warn-on-reflection* true)
 
 (defn get-headers
   "Creates a name/value map of all the request headers."
   [^HttpServletRequest request]
   (reduce
-    (fn [headers, ^String name]
+    (fn [headers ^String name]
       (assoc headers
         (.toLowerCase name Locale/ENGLISH)
         (->> (.getHeaders request name)
@@ -95,32 +92,16 @@
   (when-let [content-type (get headers "content-type")]
     (.setContentType response content-type)))
 
-(defn- make-output-stream
-  [^HttpServletResponse response ^AsyncContext context]
-  (let [os (.getOutputStream response)]
-    (if (nil? context)
-      os
-      (proxy [java.io.FilterOutputStream] [os]
-        (write
-          ([b]         (.write os ^bytes b))
-          ([b off len] (.write os ^bytes b off len)))
-        (close []
-          (.close os)
-          (.complete context))))))
-
 (defn update-servlet-response
-  "Update the HttpServletResponse using a response map. Takes an optional
-  AsyncContext."
-  ([response response-map]
-   (update-servlet-response response nil response-map))
-  ([^HttpServletResponse response context response-map]
-   (let [{:keys [status headers body]} response-map]
-     (when (nil? response)
-       (throw (NullPointerException. "HttpServletResponse is nil")))
-     (when (nil? response-map)
-       (throw (NullPointerException. "Response map is nil")))
-     (when status
-       (.setStatus response status))
-     (set-headers! response headers)
-     (let [output-stream (make-output-stream response context)]
-       (rp/write-body-to-stream body response-map output-stream)))))
+  "Update the HttpServletResponse using a response map."
+  [^HttpServletResponse response response-map]
+  (let [{:keys [status headers body]} response-map]
+    (when (nil? response)
+      (throw (NullPointerException. "HttpServletResponse is nil")))
+    (when (nil? response-map)
+      (throw (NullPointerException. "Response map is nil")))
+    (when status
+      (.setStatus response status))
+    (set-headers! response headers)
+    (let [output-stream (.getOutputStream response)]
+      (rp/write-body-to-stream body response-map output-stream))))

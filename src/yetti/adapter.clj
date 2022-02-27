@@ -60,22 +60,23 @@
           response-map (handler request-map)]
       (when response-map
         (if (websocket-upgrade? response-map)
-          (let [^ServerContext servlet-context (.getServletContext request)]
-            (ws/upgrade-websocket request response servlet-context (:ws response-map) options))
+          (ws/upgrade-websocket request response (:ws response-map) options)
           (util/update-servlet-response response response-map))))))
 
 (defn- wrap-async-handler
   "Returns an Jetty Handler implementation for the given Ring **async** handler."
   [handler options]
   (fn [^HttpServletRequest request ^HttpServletResponse response]
-    (let [^AsyncContext async-context (.startAsync request)
-          ^ServerContext servlet-context (.getServletContext request)]
+    (let [^AsyncContext async-context (.startAsync request)]
       (.setTimeout async-context (:http/idle-timeout options))
       (handler (util/build-request-map request)
                (fn [response-map]
-                 (if (websocket-upgrade? response-map)
-                   (ws/upgrade-websocket request response async-context servlet-context (:ws response-map) options)
-                   (util/update-servlet-response response async-context response-map)))
+                 (try
+                   (if (websocket-upgrade? response-map)
+                     (ws/upgrade-websocket request response (:ws response-map) options)
+                     (util/update-servlet-response response response-map))
+                   (finally
+                     (.complete async-context))))
                (fn [^Throwable exception]
                  (.sendError response 500 (.getMessage exception))
                  (.complete async-context))))))
@@ -122,6 +123,7 @@
         factories (cond-> []
                     (contains? protocols :h1)    (conj (HttpConnectionFactory. config))
                     (contains? protocols :h2c)   (conj (HTTP2CServerConnectionFactory. config))
+
                     (contains? protocols :proxy) (conj (ProxyConnectionFactory.)))
 
         connector (doto (ServerConnector.

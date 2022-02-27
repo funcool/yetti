@@ -32,6 +32,7 @@ public class HandlerWrapper extends ServletHandler {
 
   public static ServletContextHandler wrap(IFn handler) {
     final var sch = new ServletContextHandler();
+    // sch.setContextPath("/");
     sch.setAllowNullPathInfo(true);
     JettyWebSocketServletContainerInitializer.configure(sch, null);
 
