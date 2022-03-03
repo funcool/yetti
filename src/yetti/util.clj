@@ -1,107 +1,158 @@
-;; This code is derived from the ring-servlet package and adapted
-;; yetti needs. It is not possible to use the ring-servlet package
-;; directly because of the javax to jakarta java package name change.
+;; This Source Code Form is subject to the terms of the Mozilla Public
+;; License, v. 2.0. If a copy of the MPL was not distributed with this
+;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
 ;;
-;; Copyright (c) 2021-Now Andrey Antukh
-;; EPL-1.0 License.
-
-;; The original license of the code:
-;; Copyright (c) 2009-2010 Mark McGranaghan
-;; Copyright (c) 2009-2018 James Reeves
-;;
-;; Permission is hereby granted, free of charge, to any person
-;; obtaining a copy of this software and associated documentation
-;; files (the "Software"), to deal in the Software without
-;; restriction, including without limitation the rights to use,
-;; copy, modify, merge, publish, distribute, sublicense, and/or sell
-;; copies of the Software, and to permit persons to whom the
-;; Software is furnished to do so, subject to the following
-;; conditions:
-;;
-;; The above copyright notice and this permission notice shall be
-;; included in all copies or substantial portions of the Software.
-;;
-;; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-;; EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
-;; OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-;; NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
-;; HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
-;; WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-;; FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
-;; OTHER DEALINGS IN THE SOFTWARE.
+;; Copyright © Andrey Antukh <niwi@niwi.nz>
 
 (ns yetti.util
   (:require
    [clojure.java.io :as io]
-   [clojure.string :as str]
-   [ring.core.protocols :as rp])
+   [clojure.string :as str])
   (:import
-   javax.servlet.http.HttpServletRequest
-   javax.servlet.http.HttpServletResponse
-   java.io.InputStream
-   java.util.Locale))
+   io.undertow.server.HttpServerExchange
+   io.undertow.server.handlers.Cookie
+   io.undertow.server.handlers.CookieImpl
+   io.undertow.server.handlers.form.FormData
+   io.undertow.server.handlers.form.FormData$FileItem
+   io.undertow.server.handlers.form.FormData$FormValue
+   io.undertow.server.handlers.form.FormDataParser
+   io.undertow.server.handlers.form.FormEncodedDataDefinition
+   io.undertow.server.handlers.form.FormParserFactory
+   io.undertow.server.handlers.form.MultiPartParserDefinition
+   io.undertow.util.HeaderMap
+   io.undertow.util.HeaderValues
+   io.undertow.util.HttpString
+   yetti.util.ByteBufferHelpers
+   java.nio.file.Paths
+   java.util.Deque
+   java.util.Map
+   java.util.concurrent.Executor))
 
 (set! *warn-on-reflection* true)
 
-(defn get-headers
+(def default-temp-dir
+  (Paths/get "/tmp/undertow/" (into-array String [])))
+
+(def default-max-item-size
+  (* 1024 1024 5)) ; 5 MiB
+
+(defn tname
+  []
+  (.getName (Thread/currentThread)))
+
+(defn- headers->map
+  [^HeaderMap headers]
+  (into {}
+        (map (fn [^HeaderValues hvs]
+               [(-> hvs .getHeaderName .toString .toLowerCase)
+                (if (= 1 (.size hvs))
+                  (.getFirst hvs)
+                  (str/join "," hvs))])
+             (seq headers))))
+
+(defn parser-factory
+  [{:keys [item-max-size temp-dir executor]
+    :or {item-max-size default-max-item-size
+         temp-dir default-temp-dir}}]
+  (let [multipart (doto (MultiPartParserDefinition.)
+                    (.setFileSizeThreshold 0)
+                    (.setMaxIndividualFileSize item-max-size)
+                    (.setTempFileLocation temp-dir)
+                    (.setExecutor ^Executor executor))
+        xform     (doto (FormEncodedDataDefinition.)
+                    (.setDefaultEncoding "UTF-8"))]
+    (.. (FormParserFactory/builder)
+        (withParsers [xform multipart])
+        (build))))
+
+(defn form-item->map
+  [^String k ^FormData$FormValue fval]
+  (if (.isFileItem fval)
+    (let [^FormData$FileItem fitem (.getFileItem fval)
+          headers (headers->map (.getHeaders fval))]
+      (cond-> {:name k
+               :headers headers
+               :filename (.getFileName fval)
+               :path (.getFile fitem)
+               :size (.getFileSize fitem)}
+        (contains? headers "content-type")
+        (assoc :mtype (get headers "content-type"))))
+    {:value (.getValue fval)
+     :name k}))
+
+(defn parse-query-data
+  ([request] (parse-query-data request {}))
+  ([{:keys [exchange] :as request} {:keys [key-fn] :or {key-fn keyword}}]
+   (into {}
+         (map (fn [[^String k ^Deque v]]
+                (if (= 1 (.size v))
+                  [(key-fn k) (.peek v)]
+                  [(key-fn k) (into [] v)])))
+         (.getQueryParameters ^HttpServerExchange exchange))))
+
+(defn set-cookies!
+  [^HttpServerExchange exchange cookies]
+  (let [^Map rcookies (.getResponseCookies exchange)]
+    (doseq [[k cookie-map] cookies]
+      (let [{:keys [path value domain max-age expires same-site secure]} cookie-map
+            item (doto (CookieImpl. ^String k ^String (str value))
+                   (cond-> secure    (.setSecure ^Boolean secure))
+                   (cond-> path      (.setPath ^String path))
+                   (cond-> domain    (.setDomain ^String domain))
+                   (cond-> max-age   (.setMaxAge ^Integer (int max-age)))
+                   (cond-> expires   (.setExpires ^java.util.Date expires))
+                   (cond-> same-site (.setSameSiteMode (case same-site
+                                                         :lax "Lax"
+                                                         :strict "Strict"
+                                                         :none "None"))))]
+        (.put ^Map rcookies ^String k ^Cookie item)))))
+
+(defn parse-form-data
+  ([request] (parse-form-data request {}))
+  ([{:keys [exchange] :as request} {:keys [key-fn] :or {key-fn keyword} :as options}]
+   (let [factory  (parser-factory options)
+         parser   (.createParser ^FormParserFactory factory
+                                 ^HttpServerExchange exchange)
+         form     (some-> parser .parseBlocking)]
+     (into {}
+           (comp
+            (mapcat (fn [^String k]
+                      (map (partial form-item->map k) (.get form k))))
+            (map (fn [{:keys [name value] :as upload}]
+                   [(key-fn name)
+                    (or value upload)])))
+           (seq form)))))
+
+(defn get-request-header
+  [^HttpServerExchange exchange ^String name]
+  (let [^HeaderMap headers  (.getRequestHeaders exchange)]
+    (when-let [^HeaderValues entry (.get headers (HttpString/tryFromString name))]
+      (if (= 1 (.size entry))
+        (.getFirst entry)
+        (str/join "," entry)))))
+
+(defn get-request-headers
   "Creates a name/value map of all the request headers."
-  [^HttpServletRequest request]
-  (reduce
-    (fn [headers ^String name]
-      (assoc headers
-        (.toLowerCase name Locale/ENGLISH)
-        (->> (.getHeaders request name)
-             (enumeration-seq)
-             (str/join ","))))
-    {}
-    (enumeration-seq (.getHeaderNames request))))
+  [^HttpServerExchange exchange]
+  (headers->map (.getRequestHeaders exchange)))
 
-(defn get-content-length
-  "Returns the content length, or nil if there is no content."
-  [^HttpServletRequest request]
-  (let [length (.getContentLength request)]
-    (if (>= length 0) length)))
+(defn- parse-cookie
+  [^Cookie cookie]
+  {:name (.getName cookie)
+   :value (.getValue cookie)})
 
-(defn build-request-map
-  "Create the request map from the HttpServletRequest object."
-  [^HttpServletRequest request]
-  {:server-port        (.getServerPort request)
-   :server-name        (.getServerName request)
-   :remote-addr        (.getRemoteAddr request)
-   :uri                (.getRequestURI request)
-   :query-string       (.getQueryString request)
-   :scheme             (keyword (.getScheme request))
-   :request-method     (keyword (.toLowerCase (.getMethod request) Locale/ENGLISH))
-   :protocol           (.getProtocol request)
-   :headers            (get-headers request)
-   :content-type       (.getContentType request)
-   :content-length     (get-content-length request)
-   :character-encoding (.getCharacterEncoding request)
-   :ssl-client-cert    nil
-   :body               (.getInputStream request)})
+(defn get-request-cookies
+  [^HttpServerExchange exchange]
+  (into {}
+        (map (fn [[k cookie]]
+               [k (parse-cookie cookie)]))
+        (.getRequestCookies ^HttpServerExchange exchange)))
 
-(defn set-headers!
-  "Update a HttpServletResponse with a map of headers."
-  [^HttpServletResponse response, headers]
-  (doseq [[key val-or-vals] headers]
-    (if (string? val-or-vals)
-      (.setHeader response key val-or-vals)
-      (doseq [val val-or-vals]
-        (.addHeader response key val))))
+(defn get-request-cookie
+  [^HttpServerExchange exchange ^String name]
+  (let [^Map cookies (.getRequestCookies ^HttpServerExchange exchange)]
+    (some-> (.get cookies name) parse-cookie)))
 
-  (when-let [content-type (get headers "content-type")]
-    (.setContentType response content-type)))
-
-(defn update-servlet-response
-  "Update the HttpServletResponse using a response map."
-  [^HttpServletResponse response response-map]
-  (let [{:keys [status headers body]} response-map]
-    (when (nil? response)
-      (throw (NullPointerException. "HttpServletResponse is nil")))
-    (when (nil? response-map)
-      (throw (NullPointerException. "Response map is nil")))
-    (when status
-      (.setStatus response status))
-    (set-headers! response headers)
-    (let [output-stream (.getOutputStream response)]
-      (rp/write-body-to-stream body response-map output-stream))))
+(defn copy-many
+  [data]
+  (ByteBufferHelpers/copyMany data))

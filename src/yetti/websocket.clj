@@ -1,29 +1,34 @@
+;; This Source Code Form is subject to the terms of the Mozilla Public
+;; License, v. 2.0. If a copy of the MPL was not distributed with this
+;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
+;;
+;; Copyright © Andrey Antukh <niwi@niwi.nz>
+
 (ns yetti.websocket
   (:require
    [clojure.string :as str]
+   [yetti.request :as req]
    [yetti.util :as util])
   (:import
    clojure.lang.IFn
-   java.nio.ByteBuffer
-   java.time.Duration
-   java.util.Locale
-   javax.servlet.AsyncContext
-   javax.servlet.ServletContext
-   javax.servlet.http.HttpServlet
-   javax.servlet.http.HttpServletRequest
-   javax.servlet.http.HttpServletResponse
-   org.eclipse.jetty.servlet.ServletHolder
-   org.eclipse.jetty.websocket.api.RemoteEndpoint
-   org.eclipse.jetty.websocket.api.Session
-   org.eclipse.jetty.websocket.api.WebSocketAdapter
-   org.eclipse.jetty.websocket.api.WebSocketPingPongListener
-   org.eclipse.jetty.websocket.api.WriteCallback
-   org.eclipse.jetty.websocket.common.JettyExtensionConfig
-   org.eclipse.jetty.websocket.server.JettyServerUpgradeRequest
-   org.eclipse.jetty.websocket.server.JettyWebSocketCreator
-   org.eclipse.jetty.websocket.server.JettyWebSocketServerContainer))
+   io.undertow.server.HttpServerExchange
+   io.undertow.websockets.WebSocketConnectionCallback
+   io.undertow.websockets.WebSocketProtocolHandshakeHandler
+   io.undertow.websockets.core.AbstractReceiveListener
+   io.undertow.websockets.core.BufferedBinaryMessage
+   io.undertow.websockets.core.BufferedTextMessage
+   io.undertow.websockets.core.CloseMessage
+   io.undertow.websockets.core.WebSocketCallback
+   io.undertow.websockets.core.WebSocketChannel
+   io.undertow.websockets.core.WebSockets
+   io.undertow.websockets.extensions.PerMessageDeflateHandshake
+   io.undertow.websockets.spi.WebSocketHttpExchange
+   io.undertow.websockets.core.WebSocketUtils
+   yetti.util.WebSocketListenerWrapper
+   org.xnio.Pooled
+   java.nio.ByteBuffer))
 
-;; (set! *warn-on-reflection* true)
+(set! *warn-on-reflection* true)
 
 (defprotocol IWebSocket
   (send! [this msg] [this msg cb])
@@ -47,67 +52,70 @@
 
 (defn wrap-callback
   [cb]
-  (reify WriteCallback
-    (writeFailed [_ throwable]
-      (cb throwable))
-    (writeSuccess [_]
-      (cb nil))))
+  (reify WebSocketCallback
+    (complete [_ _ _]
+      (cb nil))
+    (onError [_ _ _ cause]
+      (cb cause))))
 
 (extend-protocol IWebSocketSend
   (Class/forName "[B")
   (-send!
-    ([ba ws] (-send! (ByteBuffer/wrap ba) ws))
-    ([ba ws cb] (-send! (ByteBuffer/wrap ba) ws cb)))
+    ([ba channel] (-send! (ByteBuffer/wrap ba) channel))
+    ([ba channel cb] (-send! (ByteBuffer/wrap ba) channel cb)))
 
   ByteBuffer
   (-send!
-    ([bb ws] (-> ^WebSocketAdapter ws .getRemote (.sendBytes ^ByteBuffer bb)))
-    ([bb ws cb] (-> ^WebSocketAdapter ws .getRemote (.sendBytes ^ByteBuffer bb ^WriteCallback (wrap-callback cb)))))
-
+    ([bb channel] (WebSockets/sendBinaryBlocking ^ByteBuffer bb ^WebSocketChannel channel))
+    ([bb channel cb] (WebSockets/sendBinary ^ByteBuffer bb
+                                            ^WebSocketChannel channel
+                                            ^WebSocketCallback (wrap-callback cb))))
   String
   (-send!
-    ([s ws] (-> ^WebSocketAdapter ws .getRemote (.sendString ^String s)))
-    ([s ws cb] (-> ^WebSocketAdapter ws .getRemote (.sendString ^String s ^WriteCallback (wrap-callback cb)))))
-
-  IFn
-  (-send! [f ws] (-> ^WebSocketAdapter ws .getRemote f)))
+    ([s channel] (WebSockets/sendTextBlocking ^String s ^WebSocketChannel channel))
+    ([s channel cb] (WebSockets/sendText ^String s
+                                         ^WebSocketChannel channel
+                                         ^WebSocketCallback (wrap-callback cb)))))
 
 (extend-protocol IWebSocketPing
   (Class/forName "[B")
   (-ping!
-    ([ba ws] (-ping! (ByteBuffer/wrap ba) ws))
-    ([ba ws cb] (-ping! (ByteBuffer/wrap ba) ws cb)))
-
-  ByteBuffer
-  (-ping!
-    ([bb ws] (-> ^WebSocketAdapter ws .getRemote (.sendPing ^ByteBuffer bb)))
-    ([bb ws cb] (-> ^WebSocketAdapter ws .getRemote (.sendPing ^ByteBuffer bb ^WriteCallback (wrap-callback cb)))))
+    ([ba channel] (-ping! (ByteBuffer/wrap ba) channel))
+    ([ba channel cb] (-ping! (ByteBuffer/wrap ba) channel cb)))
 
   String
   (-ping!
-    ([s ws] (-ping! (ByteBuffer/wrap (.getBytes s)) ws))
-    ([s ws cb] (-ping! (ByteBuffer/wrap (.getBytes s)) ws cb))))
+    ([s channel] (-ping! (WebSocketUtils/fromUtf8String s) channel))
+    ([s channel cb] (-ping! (WebSocketUtils/fromUtf8String s) channel cb)))
+
+  ByteBuffer
+  (-ping!
+    ([bb channel] (WebSockets/sendPingBlocking ^ByteBuffer bb ^WebSocketChannel channel))
+    ([bb channel cb] (WebSockets/sendPing ^ByteBuffer bb
+                                          ^WebSocketChannel channel
+                                          ^WebSocketCallback (wrap-callback cb)))))
 
 
 (extend-protocol IWebSocketPong
   (Class/forName "[B")
   (-pong!
-    ([ba ws] (-pong! (ByteBuffer/wrap ba) ws))
-    ([ba ws cb] (-pong! (ByteBuffer/wrap ba) ws cb)))
-
-  ByteBuffer
-  (-pong!
-    ([bb ws] (-> ^WebSocketAdapter ws .getRemote (.sendPong ^ByteBuffer bb)))
-    ([bb ws cb] (-> ^WebSocketAdapter ws .getRemote (.sendPong ^ByteBuffer bb ^WriteCallback (wrap-callback cb)))))
+    ([ba channel] (-pong! (ByteBuffer/wrap ba) channel))
+    ([ba channel cb] (-pong! (ByteBuffer/wrap ba) channel cb)))
 
   String
   (-pong!
-    ([s ws] (-pong! (ByteBuffer/wrap (.getBytes s)) ws))
-    ([s ws cb] (-pong! (ByteBuffer/wrap (.getBytes s)) ws cb))))
+    ([s channel] (-pong! (WebSocketUtils/fromUtf8String s) channel))
+    ([s channel cb] (-pong! (WebSocketUtils/fromUtf8String s) channel cb)))
 
+  ByteBuffer
+  (-pong!
+    ([bb channel] (WebSockets/sendPongBlocking ^ByteBuffer bb ^WebSocketChannel channel))
+    ([bb channel cb] (WebSockets/sendPong ^ByteBuffer bb
+                                          ^WebSocketChannel channel
+                                          ^WebSocketCallback (wrap-callback cb)))))
 
 (extend-protocol IWebSocket
-  WebSocketAdapter
+  WebSocketChannel
   (send!
     ([this msg] (-send! msg this))
     ([this msg cb] (-send! msg this cb)))
@@ -118,115 +126,64 @@
     ([this msg] (-pong! msg this))
     ([this msg cb] (-pong! msg this cb)))
   (close! [this]
-    (.. this (getSession) (close)))
-  (close! [this status-code reason]
-    (.. this (getSession) (close status-code reason)))
+    (.. this (close)))
+  (close! [this code reason]
+    (.setCloseCode this code)
+    (.setCloseReason this reason)
+    (.sendClose this)
+    (.close this))
   (remote-addr [this]
-    (.. this (getSession) (getRemoteAddress)))
+    (.. this (getDestinationAddress)))
   (idle-timeout! [this ms]
-    (.. this (getSession) (setIdleTimeout ^long ms)))
+    (if (integer? ms)
+      (.. this (setIdleTimeout ^long ms))
+      (.. this (setIdleTimeout ^long (inst-ms ms)))))
   (connected? [this]
-    (. this (isConnected))))
-
-(defn- create-websocket-adapter
-  [{:keys [on-connect on-error on-text on-close on-bytes on-ping on-pong]
-    :or {on-connect no-op
-         on-error no-op
-         on-text no-op
-         on-close no-op
-         on-bytes no-op
-         on-ping no-op
-         on-pong no-op}}]
-  (proxy [WebSocketAdapter WebSocketPingPongListener] []
-    (onWebSocketConnect [^Session session]
-      (let [^WebSocketAdapter this this]
-        (proxy-super onWebSocketConnect session))
-      (on-connect this))
-    (onWebSocketError [^Throwable e]
-      (on-error this e))
-    (onWebSocketText [^String message]
-      (on-text this message))
-    (onWebSocketClose [statusCode ^String reason]
-      (let [^WebSocketAdapter this this]
-        (proxy-super onWebSocketClose statusCode reason))
-      (on-close this statusCode reason))
-    (onWebSocketBinary [^bytes payload offset len]
-      (on-bytes this payload offset len))
-    (onWebSocketPing [^ByteBuffer bytebuffer]
-      (on-ping this bytebuffer))
-    (onWebSocketPong [^ByteBuffer bytebuffer]
-      (on-pong this bytebuffer))))
-
-(defn create-websocket-creator
-  [factory-fn]
-  (reify JettyWebSocketCreator
-    (createWebSocket [this req resp]
-      (let [handlers (factory-fn req)]
-        (if-let [{:keys [code message headers]} (:error handlers)]
-          (do
-            (util/set-headers! resp headers)
-            (.sendError resp code message))
-
-          (do
-            (when-let [sp (:subprotocol handlers)]
-              (.setAcceptedSubProtocol resp sp))
-            (when-let [exts (seq (:extensions handlers))]
-              (.setExtensions resp (mapv #(JettyExtensionConfig. ^String %) exts)))
-
-            (create-websocket-adapter handlers)))))))
-
-(defn upgrade-websocket
-  [^HttpServletRequest req
-   ^HttpServletResponse res
-   ^clojure.lang.IFn ws
-   {:keys [:websocket/idle-timeout
-           :websocket/max-text-msg-size
-           :websocket/max-binary-msg-size]}]
-  (let [creator   (create-websocket-creator ws)
-        container (JettyWebSocketServerContainer/getContainer (.getServletContext req))]
-    (.setIdleTimeout container (Duration/ofMillis idle-timeout))
-    (.setMaxTextMessageSize container max-text-msg-size)
-    (.setMaxBinaryMessageSize container max-binary-msg-size)
-    (.upgrade container creator req res)))
+    (. this (isOpen))))
 
 (defn upgrade-request?
   "Checks if a request is a websocket upgrade request."
-  [{:keys [headers]}]
-  (let [upgrade    (get headers "upgrade")
-        connection (get headers "connection")]
+  [request]
+  (let [upgrade    (req/get-header request "upgrade")
+        connection (req/get-header request "connection")]
     (and upgrade
          connection
          (str/includes? (str/lower-case upgrade) "websocket")
          (str/includes? (str/lower-case connection) "upgrade"))))
 
+(defn- create-websocket-receiver
+  [{:keys [on-error on-text on-close on-bytes on-ping on-pong]}]
+  (WebSocketListenerWrapper. on-text
+                             on-bytes
+                             on-ping
+                             on-pong
+                             on-error
+                             on-close))
+
+(defn create-websocket-connecton-callback
+  ^WebSocketConnectionCallback
+  [on-connect {:keys [:websocket/idle-timeout]}]
+  (reify WebSocketConnectionCallback
+    (onConnect [_ exchange channel]
+      (some->> idle-timeout long (.setIdleTimeout channel))
+      (let [setter   (.getReceiveSetter ^WebSocketChannel channel)
+            handlers (on-connect exchange channel)]
+        (.set setter (create-websocket-receiver handlers))
+        (.resumeReceives ^WebSocketChannel channel)))))
+
+(defn upgrade-response
+  [^HttpServerExchange exchange on-connect options]
+  (let [callback (create-websocket-connecton-callback on-connect options)
+        handler  (WebSocketProtocolHandshakeHandler. callback)]
+    (.addExtension handler (PerMessageDeflateHandshake. false 6))
+    (.handleRequest handler exchange)))
+
 (defn upgrade
-  "Returns a websocket upgrade response.
-
-   ws-handler must be a map of handler fns:
-   {:on-connect #(create-fn %)               ; ^Session ws-session
-    :on-text   #(text-fn % %2 %3 %4)         ; ^Session ws-session message
-    :on-bytes  #(binary-fn % %2 %3 %4 %5 %6) ; ^Session ws-session payload offset len
-    :on-close  #(close-fn % %2 %3 %4)        ; ^Session ws-session statusCode reason
-    :on-error  #(error-fn % %2 %3)}          ; ^Session ws-session e
-   or a custom creator function take upgrade request as parameter and returns a handler fns map,
-   negotiated subprotocol and extensions (or error info).
-
-   The response contains HTTP status 101 (Switching Protocols)
-   and the following headers:
-   - connection: upgrade
-   - upgrade: websocket
-   "
-  [request ws-handler]
-  (let [ws-handler (cond (map? ws-handler) (constantly ws-handler)
-                         (fn? ws-handler)  ws-handler
-                         :else             (throw (IllegalArgumentException. "ws-handler should be a map or fn")))]
-
-    {:status 101 ;; http 101 switching protocols
-     :headers {"upgrade" "websocket"
-               "connection" "upgrade"}
-     :ws (fn [^JettyServerUpgradeRequest req]
-           (-> request
-               (assoc :websocket-subprotocols (into [] (.getSubProtocols req)))
-               (assoc :websocket-extensions (into [] (.getExtensions req)))
-               (dissoc :body)
-               (ws-handler)))}))
+  "Returns a websocket upgrade response."
+  [request handler]
+  {::upgrade (fn [^WebSocketHttpExchange exchange ^WebSocketChannel channel]
+               (-> request
+                   (assoc ::exchange exchange)
+                   (assoc ::channel channel)
+                   (dissoc :body)
+                   (handler)))})

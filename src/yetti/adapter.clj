@@ -1,199 +1,189 @@
+;; This Source Code Form is subject to the terms of the Mozilla Public
+;; License, v. 2.0. If a copy of the MPL was not distributed with this
+;; file, You can obtain one at http://mozilla.org/MPL/2.0/.
+;;
+;; Copyright © Andrey Antukh <niwi@niwi.nz>
+
 (ns yetti.adapter
   (:require
-   [yetti.util :as util]
-   [yetti.websocket :as ws])
+   [yetti.util :as yu]
+   [yetti.websocket :as ws]
+   [yetti.request :as req]
+   [yetti.response :as resp]
+   [clojure.stacktrace :as ctr])
   (:import
-   yetti.util.HandlerWrapper
-   javax.servlet.AsyncContext
-   javax.servlet.ServletContext
-   javax.servlet.http.HttpServletRequest
-   javax.servlet.http.HttpServletResponse
-   org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory
-   org.eclipse.jetty.server.ConnectionFactory
-   org.eclipse.jetty.server.Connector
-   org.eclipse.jetty.server.ForwardedRequestCustomizer
-   org.eclipse.jetty.server.Handler
-   org.eclipse.jetty.server.HttpConfiguration
-   org.eclipse.jetty.server.HttpConnectionFactory
-   org.eclipse.jetty.server.ProxyConnectionFactory
-   org.eclipse.jetty.server.Server
-   org.eclipse.jetty.server.ServerConnector
-   org.eclipse.jetty.util.thread.QueuedThreadPool
-   org.eclipse.jetty.util.thread.ScheduledExecutorScheduler
-   org.eclipse.jetty.util.thread.ThreadPool))
+   io.undertow.Undertow
+   io.undertow.UndertowOptions
+   io.undertow.server.HttpHandler
+   io.undertow.server.HttpServerExchange
+   io.undertow.util.HeaderMap
+   io.undertow.util.HttpString
+   io.undertow.util.SameThreadExecutor
+   java.util.concurrent.Executor))
 
 (set! *warn-on-reflection* true)
 
-(def base-defaults
-  {:jetty/wrap-handler identity
-   :http/output-buffer-size 32768
-   :http/request-header-size 8192
-   :http/response-header-size 8192
-   :http/header-cache-size 512
-   :http/handle-forwarded false
+(def defaults
+  {:http/headers-cache-size 64
+   :http/max-cookies 32
+   :http/max-headers 64
+   :http/max-headers-size (* 1024 1024) ; 1 MiB
+   :http/max-body-size (* 1024 1024 6) ; 6 MiB
+   :http/max-multipart-body-size (* 1024 1024 12) ; 12 MiB
    :http/port 11010
    :http/host "localhost"
-   :http/protocols #{:h1 :h2c}
    :http/idle-timeout 200000
-
+   :http/parse-timeout 30000
+   :xnio/buffer-size (* 1024 64) ; 64 KiB
+   :xnio/direct-buffers false
+   :xnio/dispatch true
    :ring/async false
-
    :websocket/idle-timeout 500000
-   :websocket/max-text-msg-size 65536
-   :websocket/max-binary-msg-size 65536
+   })
 
-   :thread-pool/max-threads 200
-   :thread-pool/min-threads 5
-   :thread-pool/idle-timeout 60000
-   :thread-pool/job-queue nil
-   :thread-pool/daemon true})
+(defn- write-response!
+  "Update the HttpServerExchange using a response map."
+  [^HttpServerExchange exchange response]
+  (.setStatusCode exchange (or (resp/status response) 200))
+  (let [response-headers ^HeaderMap (.getResponseHeaders exchange)]
+    (doseq [[key val-or-vals] (resp/headers response)]
+      (let [key (HttpString/tryFromString ^String key)]
+        (if (coll? val-or-vals)
+          (.putAll response-headers key ^Collection val-or-vals)
+          (.put response-headers key ^String val-or-vals))))
+    (when-let [cookies (resp/cookies response)]
+      (yu/set-cookies! exchange cookies))
+    (with-open [output-stream (.getOutputStream exchange)]
+      (resp/write-body-to-stream response output-stream))))
 
-(defn- websocket-upgrade?
-  [{:keys [status ws]}]
-  (and (= 101 status) ws))
-
-(defn- wrap-handler
-  "Returns an Jetty Handler implementation for the given Ring handler."
-  [handler options]
-  (fn [^HttpServletRequest request ^HttpServletResponse response]
-    (let [request-map  (util/build-request-map request)
-          response-map (handler request-map)]
-      (when response-map
-        (if (websocket-upgrade? response-map)
-          (ws/upgrade-websocket request response (:ws response-map) options)
-          (util/update-servlet-response response response-map))))))
-
-(defn- wrap-async-handler
-  "Returns an Jetty Handler implementation for the given Ring **async** handler."
-  [handler options]
-  (fn [^HttpServletRequest request ^HttpServletResponse response]
-    (let [^AsyncContext async-context (.startAsync request)]
-      (.setTimeout async-context (:http/idle-timeout options))
-      (handler (util/build-request-map request)
-               (fn [response-map]
-                 (try
-                   (if (websocket-upgrade? response-map)
-                     (ws/upgrade-websocket request response (:ws response-map) options)
-                     (util/update-servlet-response response response-map))
-                   (finally
-                     (.complete async-context))))
-               (fn [^Throwable exception]
-                 (.sendError response 500 (.getMessage exception))
-                 (.complete async-context))))))
-
-(defn- create-http-config
-  "Creates jetty http configurator"
-  [{:keys [:http/output-buffer-size
-           :http/handle-forwarded
-           :http/request-header-size
-           :http/response-header-size
-           :http/header-cache-size]}]
-  (doto (HttpConfiguration.)
-    ;; (.setSecurePort secure-port)
-    (cond-> handle-forwarded (.addCustomizer (ForwardedRequestCustomizer.)))
-    (.setSecureScheme "https")
-    (.setOutputBufferSize output-buffer-size)
-    (.setRequestHeaderSize request-header-size)
-    (.setResponseHeaderSize response-header-size)
-    (.setSendServerVersion false)
-    (.setSendDateHeader false)
-    (.setHeaderCacheSize header-cache-size)))
-
-(defn- create-thread-pool
-  [{:keys [:thread-pool/instance
-           :thread-pool/job-queue
-           :thread-pool/max-threads
-           :thread-pool/min-threads
-           :thread-pool/idle-timeout
-           :thread-pool/daemon]}]
-  (or instance
-      (doto (QueuedThreadPool. (int max-threads)
-                               (int min-threads)
-                               (int idle-timeout)
-                               job-queue)
-        (.setDaemon daemon))))
-
-(defn- create-connectors
-  [server {:keys [:http/protocols
-                  :http/port
-                  :http/host
-                  :http/idle-timeout]
-           :as options}]
-  (let [config    (create-http-config options)
-        factories (cond-> []
-                    (contains? protocols :h1)    (conj (HttpConnectionFactory. config))
-                    (contains? protocols :h2c)   (conj (HTTP2CServerConnectionFactory. config))
-
-                    (contains? protocols :proxy) (conj (ProxyConnectionFactory.)))
-
-        connector (doto (ServerConnector.
-                         ^Server server
-                         ^"[Lorg.eclipse.jetty.server.ConnectionFactory;"
-                         (into-array ConnectionFactory factories))
-                    (.setPort port)
-                    (.setHost host)
-                    (.setIdleTimeout idle-timeout))]
-    (into-array Connector [connector])))
+(defn- dispatch-exception
+  [^HttpServerExchange exchange ^Throwable cause]
+  (try
+    (let [body (with-out-str (ctr/print-cause-trace cause))]
+      (->> (resp/response 500 body {"content-type" "text/plain"})
+           (write-response! exchange)))
+    (catch Throwable cause
+      ;; do nothing
+      )))
 
 (defn- create-handler
   "Creates an instance of the final jetty handler that will be
   attached to Server."
-  [{:keys [:ring/async ::handler] :as options}]
-  (let [wrap-jetty-handler (:jetty/wrap-handler options)]
-    (wrap-jetty-handler
-     (HandlerWrapper/wrap
-      (if async
-        (wrap-async-handler handler options)
-        (wrap-handler handler options))))))
+  [handler-fn {:keys [:xnio/dispatch :ring/async :http/on-error] :as options}]
+  (letfn [(dispatch-async [^HttpServerExchange exchange]
+            (try
+              (handler-fn
+               (req/request exchange)
+               (fn [response]
+                 (try
+                   (if-let [upgrade-fn (::ws/upgrade response)]
+                     (ws/upgrade-response exchange upgrade-fn options)
+                     (write-response! exchange response))
+                   (catch Throwable cause
+                     (when (fn? on-error) (on-error cause))
+                     (dispatch-exception exchange cause))))
+               (fn [cause]
+                 (when (fn? on-error) (on-error cause))
+                 (dispatch-exception exchange cause)))
+              (catch Throwable cause
+                (when (fn? on-error) (on-error cause))
+                (dispatch-exception exchange cause))))
 
-(defn- thread-pool?
-  [o]
-  (instance? ThreadPool o))
+          (dispatch-blocking [^HttpServerExchange exchange]
+            (try
+              (let [request (req/request exchange)
+                    response (handler-fn request)]
+                (if-let [upgrade-fn (::ws/upgrade response)]
+                  (ws/upgrade-response exchange upgrade-fn options)
+                  (write-response! exchange response)))
+              (catch Throwable cause
+                (when (fn? on-error) (on-error cause))
+                (dispatch-exception exchange cause))))]
+
+    (let [dispatch-fn (if async dispatch-async dispatch-blocking)]
+      (cond
+        (instance? Executor dispatch)
+        (reify HttpHandler
+          (^void handleRequest [_ ^HttpServerExchange exchange]
+           (.dispatch exchange
+                      ^Executor dispatch
+                      ^Runnable #(do (.startBlocking exchange)
+                                     (dispatch-fn exchange)))))
+
+        (false? dispatch)
+        (reify HttpHandler
+          (^void handleRequest [_ ^HttpServerExchange exchange]
+           (.dispatch exchange SameThreadExecutor/INSTANCE ^Runnable #(dispatch-fn exchange))))
+
+        :else
+        (reify HttpHandler
+          (^void handleRequest [_ ^HttpServerExchange exchange]
+           (.dispatch exchange ^Runnable #(do (.startBlocking exchange)
+                                              (dispatch-fn exchange)))))))))
 
 (defn- create-server
   "Construct a Jetty Server instance."
-  [{:keys [thread-pool] :as options}]
-  (let [pool   (create-thread-pool options)
-        server (doto (Server. ^ThreadPool pool)
-                 (.addBean (ScheduledExecutorScheduler.)))]
-    (.setConnectors server (create-connectors server options))
-    server))
+  [handler {:keys [:http/port
+                   :http/host
+                   :http/idle-timeout
+                   :http/headers-cache-size
+                   :http/max-body-size
+                   :http/max-multipart-body-size
+                   :http/max-headers-size
+                   :http/max-cookies
+                   :http/max-headers
+                   :xnio/direct-buffers
+                   :xnio/buffer-size
+                   :xnio/io-threads
+                   :xnio/worker-threads]
+            :as options}]
+  (-> (Undertow/builder)
+      (.addHttpListener port host)
+      (cond-> buffer-size (.setBufferSize buffer-size))
+      (cond-> io-threads (.setIoThreads io-threads))
+      (cond-> worker-threads (.setWorkerThreads worker-threads))
+      (cond-> direct-buffers (.setDirectBuffers direct-buffers))
+      (.setServerOption UndertowOptions/MAX_COOKIES (int max-cookies))
+      (.setServerOption UndertowOptions/MAX_HEADERS (int max-headers))
+      (.setServerOption UndertowOptions/MAX_HEADER_SIZE (int max-headers-size))
+      (.setServerOption UndertowOptions/ALWAYS_SET_KEEP_ALIVE, false)
+      (.setServerOption UndertowOptions/BUFFER_PIPELINED_DATA false)
+      (.setServerOption UndertowOptions/IDLE_TIMEOUT (int idle-timeout))
+      (.setServerOption UndertowOptions/ENABLE_HTTP2 true)
+      (.setServerOption UndertowOptions/HTTP_HEADERS_CACHE_SIZE (int headers-cache-size))
+      (.setServerOption UndertowOptions/MULTIPART_MAX_ENTITY_SIZE max-multipart-body-size)
+      (.setServerOption UndertowOptions/MAX_ENTITY_SIZE max-body-size)
+      (.setServerOption UndertowOptions/HTTP2_SETTINGS_ENABLE_PUSH false)
+      (.setHandler  ^HttpHandler handler)
+      (.build)))
 
-(defn ^Server server
+(defn ^Undertow server
   "
   Creates and confgures an instance of jetty server. This is a list of options
   that you can provide:
 
   :ring/async                    - enables the ring 1.6 async handler
-  :ring/version                  - specifies the ring version (only supports 1)
-
-  :thread-pool/daemon            - use daemon threads (defaults to true)
-  :thread-pool/max-threads       - the max number of threads to use (default 200)
-  :thread-pool/min-threads       - the min number of threads to use (default 5)
-  :thread-pool/idle-timeout      - the max idle time in milliseconds for a thread (default 60000)
-  :thread-pool/job-queue         - the job queue to be used by the Jetty threadpool (default is unbounded)
-  :thread-pool/instance          - specifies the thread pool used for jetty workloads. If you specifies
-                                   this option, all the other will be ignored.
-
-  :http/protocols                - a set of enabled protocols #{:h1 :h2c :proxy} (defaults to #{:h1 :h2c})
   :http/port                     - the port to listen on (defaults to 11010)
   :http/host                     - the hostname to listen on, defaults to 'localhost'
-  :http/idle-timeout             - the max idle time in ms for a connection (default 200000)
+  :http/idle-timeout             - the max idle time in ms for a connection (default to 200000)
+  :http/parse-timeout            - max time spend in parsing request (defaults to 30000)
+  :http/max-headers-size         - max headers (all) size (defaults to 1 MiB)
+  :http/max-body-size            - max body size (defaults to 6 MiB)
+  :http/max-multipart-body-size  - max size for multipart uploads (defaults to 12 MiB)
+  :http/max-cookies              - max number of allowed cookies in the request (defaults to 32)
+  :http/max-headers              - max number of allowed headers in the request (defaults to 64)
 
-  :websocket/idle-timeout        - the max idle time in ms for a websocket connection (default 500000)
-  :websocket/max-text-msg-size   - the max text message size in bytes for a websocket connection (default 65536)
-  :websocket/max-binary-msg-size - the max binary message size in bytes for a websocket connection (default 65536)
-
-  :jetty/wrap-handler            - a wrapper fn that wraps default jetty handler into another, default to
-                                   the `identity` fn, note that it's not a ring middleware
+  :xnio/buffer-size              - default http IO buffe size (default 64 KiB)
+  :xnio/direct-buffers           - use or not direct buffers (default to false)
+  :xnio/dispatch                 - dispatch or not the body of the handler to the worker executor
+                                   (defaults to true, can be a custom executor instance)
+  :websocket/idle-timeout        - websocket specific idle timeout (defaults to 500000)
   "
-  ([handler] (server handler {}))
-  ([handler options]
-   (let [options (merge base-defaults options)
-         server  (create-server options)
-         handler (create-handler (assoc options ::handler handler))]
-     (.setHandler ^Server server ^Handler handler)
-     server)))
+  ([handler-fn] (server handler-fn {}))
+  ([handler-fn options]
+   (let [options (merge defaults options)
+         handler (create-handler handler-fn options)]
+     (create-server handler options))))
 
 (defn start!
   "Starts the jetty server. It accepts an optional `options` parameter
@@ -201,13 +191,12 @@
 
   :join - blocks the thread until the server is starts (defaults false)
   "
-  ([server] (start! server {}))
-  ([^Server server {:keys [join] :or {join false}}]
-   (.start ^Server server)
-   (when join (.join ^Server server))
-   server))
+  [^Undertow server]
+  (.start server)
+  server)
 
 (defn stop!
   "Stops the server."
-  [^Server s]
-  (.stop s))
+  [^Undertow s]
+  (.stop s)
+  s)

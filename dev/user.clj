@@ -11,8 +11,16 @@
    [clojure.repl :refer :all]
    [clojure.test :as test]
    [yetti.adapter :as yt]
+   [yetti.websocket :as yw]
+   [yetti.util :as yu]
+   [yetti.middleware :as ymw]
+   [yetti.response :as resp]
+   [promesa.core :as p]
+   [promesa.exec :as px]
    [clojure.tools.namespace.repl :as repl]
-   [clojure.walk :refer [macroexpand-all]]))
+   [clojure.walk :refer [macroexpand-all]])
+  (:import
+   java.util.concurrent.ForkJoinPool))
 
 (defn run-tests
   ([] (run-tests #"^yetti-test.*$"))
@@ -28,21 +36,70 @@
            (test/test-vars [(resolve o)]))
        (test/test-ns o)))))
 
-(defn hello-world-handler
-  [request]
-  {:status 200
-   :headers {"content-type" "text/plain"}
-   :body "Hello world\n"})
+(defn hello-http-handler
+  ([request]
+   (prn "hello-world-handler" "sync" (yu/tname))
+   (prn "request" "query-params:" (:query-params request))
+   (prn "request" "body-params:" (:body-params request))
+   (prn "request" "params:" (:oparams request))
+
+   {:status 200
+    :headers {"content-type" "text/plain"
+              "x-foo-bar" ["baz" "foo"]}
+    :body "Hello world\n"
+    :cookies {"sample-cookie" {:value (rand-int 1000)
+                               :same-site :lax
+                               :path "/foo"
+                               :domain "localhost"
+                               :max-age 2000}}})
+
+  ([request respond raise]
+   ;; (prn "hello-world-handler" "async" (yu/tname))
+   ;; (prn "request" "query-params:" (:query-params request))
+   ;; (prn "request" "body-params:" (:body-params request))
+   ;; (prn "request" "params:" (:params request))
+
+   (respond
+    (resp/response 200 "hello world\n"
+                   {"content-type" "text/plain"
+                    "x-foo-bar" ["foo" "bar"]}
+                   {"sample-cookie" {:value (rand-int 1000)
+                                     :same-site :lax
+                                     :path "/foo"
+                                     :domain "localhost"
+                                     :max-age 2000}}))))
+
+(defn hello-websocket-handler
+  [request respond raise]
+  (px/run!
+   #(respond
+     (yw/upgrade request (fn [request]
+                           ;; (prn "ws:on-connect" (yu/tname))
+                           {:on-text (fn [channel message]
+                                       #_(prn "ws:on-text" message (yu/tname))
+                                       (yw/send! channel message))
+                            :on-close (fn [channel code reason]
+                                        #_(prn "ws:on-close" code reason (yu/tname)))
+                            :on-error (fn [channel cause]
+                                        #_(prn "on-error" (yu/tname) cause))})))))
 
 (def server nil)
 
 (defn- start
   []
-  (alter-var-root #'server (fn [server]
-                             (when server (yt/stop! server))
-                             (-> (yt/server hello-world-handler)
-                                 (yt/start!))))
-  :started)
+  (let [options {:ring/async true
+                 :xnio/io-threads 2
+                 :xnio/worker-threads 10
+                 :xnio/dispatch true #_(ForkJoinPool/commonPool)}
+        handler (-> hello-http-handler
+                    #_(ymw/wrap-server-timing)
+                    #_(ymw/wrap-params)
+                    )]
+    (alter-var-root #'server (fn [server]
+                               (when server (yt/stop! server))
+                               (-> (yt/server handler options)
+                                   (yt/start!))))
+    :started))
 
 (defn- stop
   []
