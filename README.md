@@ -27,7 +27,7 @@ See official [Ring documentation](https://github.com/ring-clojure/ring#documenta
 On deps.edn:
 
 ```clojure
-funcool/yetti {:git/tag "v6.0" :git/sha "05228fa"
+funcool/yetti {:git/tag "v6.0" :git/sha "4c8690e"
                :git/url "https://github.com/funcool/yetti.git"}
 ```
 
