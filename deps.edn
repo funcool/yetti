@@ -13,6 +13,8 @@
     clj-http/clj-http {:mvn/version "3.12.3"}
     criterium/criterium {:mvn/version "RELEASE"}
     org.slf4j/slf4j-nop {:mvn/version "RELEASE"}
+    com.taoensso/nippy {:mvn/version "3.1.1"}
+
     funcool/promesa {:mvn/version "8.0.450"}}
 
    :extra-paths ["test" "dev" "target/classes"]}

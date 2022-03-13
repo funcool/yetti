@@ -16,6 +16,7 @@
    io.undertow.UndertowOptions
    io.undertow.server.HttpHandler
    io.undertow.server.HttpServerExchange
+   io.undertow.server.DefaultByteBufferPool
    io.undertow.util.HeaderMap
    io.undertow.util.HttpString
    io.undertow.util.SameThreadExecutor
@@ -32,11 +33,18 @@
    :http/max-multipart-body-size (* 1024 1024 12) ; 12 MiB
    :http/port 11010
    :http/host "localhost"
-   :http/idle-timeout 200000
+   :http/idle-timeout 300000
    :http/parse-timeout 30000
-   :xnio/buffer-size (* 1024 64) ; 64 KiB
-   :xnio/direct-buffers false
+   :xnio/buffer-size (* 1024 16) ; 16 KiB
+   :xnio/direct-buffers true
    :xnio/dispatch true
+
+   :socket/tcp-nodelay true
+   :socket/backlog 1024
+   :socket/reuse-address true
+   :socket/read-timeout 300000
+   :socket/write-timeout 300000
+
    :ring/async false
    :websocket/idle-timeout 500000
    })
@@ -44,17 +52,20 @@
 (defn- write-response!
   "Update the HttpServerExchange using a response map."
   [^HttpServerExchange exchange response]
-  (.setStatusCode exchange (or (resp/status response) 200))
-  (let [response-headers ^HeaderMap (.getResponseHeaders exchange)]
-    (doseq [[key val-or-vals] (resp/headers response)]
-      (let [key (HttpString/tryFromString ^String key)]
-        (if (coll? val-or-vals)
-          (.putAll response-headers key ^Collection val-or-vals)
-          (.put response-headers key ^String val-or-vals))))
-    (when-let [cookies (resp/cookies response)]
-      (yu/set-cookies! exchange cookies))
-    (with-open [output-stream (.getOutputStream exchange)]
-      (resp/write-body-to-stream response output-stream))))
+  (try
+    (.setStatusCode exchange (or (resp/status response) 200))
+    (let [response-headers ^HeaderMap (.getResponseHeaders exchange)]
+      (doseq [[key val-or-vals] (resp/headers response)]
+        (let [key (HttpString/tryFromString ^String key)]
+          (if (coll? val-or-vals)
+            (.putAll response-headers key ^Collection val-or-vals)
+            (.put response-headers key ^String val-or-vals))))
+      (when-let [cookies (resp/cookies response)]
+        (yu/set-cookies! exchange cookies))
+      (with-open [output-stream (.getOutputStream exchange)]
+        (resp/write-body-to-stream response output-stream)))
+    (finally
+      (.endExchange ^HttpServerExchange exchange))))
 
 (defn- dispatch-exception
   [^HttpServerExchange exchange ^Throwable cause]
@@ -135,14 +146,32 @@
                    :xnio/direct-buffers
                    :xnio/buffer-size
                    :xnio/io-threads
-                   :xnio/worker-threads]
+                   :xnio/worker-threads
+                   :socket/send-buffer
+                   :socket/receive-buffer
+                   :socket/write-timeout
+                   :socket/read-timeout
+                   :socket/reuse-address
+                   :socket/tcp-nodelay
+                   :socket/backlog
+                   ]
             :as options}]
+
   (-> (Undertow/builder)
       (.addHttpListener port host)
-      (cond-> buffer-size (.setBufferSize buffer-size))
-      (cond-> io-threads (.setIoThreads io-threads))
-      (cond-> worker-threads (.setWorkerThreads worker-threads))
-      (cond-> direct-buffers (.setDirectBuffers direct-buffers))
+      (cond-> io-threads             (.setIoThreads io-threads))
+      (cond-> worker-threads         (.setWorkerThreads worker-threads))
+      (cond-> buffer-size            (.setBufferSize buffer-size))
+      (cond-> (some? direct-buffers) (.setDirectBuffers direct-buffers))
+
+      (cond-> (some? backlog)        (.setSocketOption org.xnio.Options/BACKLOG (int backlog)))
+      (cond-> (some? read-timeout)   (.setSocketOption org.xnio.Options/READ_TIMEOUT (int read-timeout)))
+      (cond-> (some? write-timeout)  (.setSocketOption org.xnio.Options/WRITE_TIMEOUT (int write-timeout)))
+      (cond-> (some? tcp-nodelay)    (.setSocketOption org.xnio.Options/TCP_NODELAY ^Boolean tcp-nodelay))
+      (cond-> (some? reuse-address)  (.setSocketOption org.xnio.Options/REUSE_ADDRESSES ^Boolean reuse-address))
+      (cond-> (some? send-buffer)    (.setSocketOption org.xnio.Options/SEND_BUFFER (int send-buffer)))
+      (cond-> (some? receive-buffer) (.setSocketOption org.xnio.Options/RECEIVE_BUFFER (int receive-buffer)))
+
       (.setServerOption UndertowOptions/MAX_COOKIES (int max-cookies))
       (.setServerOption UndertowOptions/MAX_HEADERS (int max-headers))
       (.setServerOption UndertowOptions/MAX_HEADER_SIZE (int max-headers-size))

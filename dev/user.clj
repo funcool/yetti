@@ -17,6 +17,7 @@
    [yetti.response :as resp]
    [promesa.core :as p]
    [promesa.exec :as px]
+   [taoensso.nippy :as nippy]
    [clojure.tools.namespace.repl :as repl]
    [clojure.walk :refer [macroexpand-all]])
   (:import
@@ -38,15 +39,15 @@
 
 (defn hello-http-handler
   ([request]
-   (prn "hello-world-handler" "sync" (yu/tname))
-   (prn "request" "query-params:" (:query-params request))
-   (prn "request" "body-params:" (:body-params request))
-   (prn "request" "params:" (:oparams request))
+   ;; (prn "hello-world-handler" "sync" (yu/tname))
+   ;; (prn "request" "query-params:" (:query-params request))
+   ;; (prn "request" "body-params:" (:body-params request))
+   ;; (prn "request" "params:" (:oparams request))
 
    {:status 200
-    :headers {"content-type" "text/plain"
+    :headers {"content-type" "application/octet-stream"
               "x-foo-bar" ["baz" "foo"]}
-    :body "Hello world\n"
+    :body (nippy/freeze nippy/stress-data)
     :cookies {"sample-cookie" {:value (rand-int 1000)
                                :same-site :lax
                                :path "/foo"
@@ -60,14 +61,17 @@
    ;; (prn "request" "params:" (:params request))
 
    (respond
-    (resp/response 200 "hello world\n"
-                   {"content-type" "text/plain"
-                    "x-foo-bar" ["foo" "bar"]}
-                   {"sample-cookie" {:value (rand-int 1000)
-                                     :same-site :lax
-                                     :path "/foo"
-                                     :domain "localhost"
-                                     :max-age 2000}}))))
+    (resp/response
+     :status  200
+     :body    (nippy/fast-freeze nippy/stress-data)
+     :headers {"content-type" "application/octet-stream"
+               "x-foo-bar" ["foo" "bar"]}))))
+
+     ;; :cookies {"sample-cookie" {:value (rand-int 1000)
+     ;;                            :same-site :lax
+     ;;                            :path "/foo"
+     ;;                            :domain "localhost"
+     ;;                            :max-age 2000}}))))
 
 (defn hello-websocket-handler
   [request respond raise]
@@ -89,9 +93,10 @@
   []
   (let [options {:ring/async true
                  :xnio/io-threads 2
-                 :xnio/worker-threads 10
+                 :xnio/direct-buffers true
+                 :xnio/worker-threads 6
                  :xnio/dispatch true #_(ForkJoinPool/commonPool)}
-        handler (-> hello-websocket-handler
+        handler (-> hello-http-handler
                     (ymw/wrap-server-timing)
                     (ymw/wrap-params)
                     )]
@@ -112,3 +117,8 @@
   []
   (stop)
   (repl/refresh :after 'user/start))
+
+
+(defn -main
+  [& args]
+  (start))
