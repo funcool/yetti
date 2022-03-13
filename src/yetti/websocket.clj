@@ -168,6 +168,10 @@
       (some->> idle-timeout long (.setIdleTimeout channel))
       (let [setter   (.getReceiveSetter ^WebSocketChannel channel)
             handlers (on-connect exchange channel)]
+
+        (when-let [on-open (:on-open handlers)]
+          (on-open channel))
+
         (.set setter (create-websocket-receiver handlers))
         (.resumeReceives ^WebSocketChannel channel)))))
 

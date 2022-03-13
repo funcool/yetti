@@ -71,17 +71,17 @@
 
 (defn hello-websocket-handler
   [request respond raise]
-  (px/run!
-   #(respond
-     (yw/upgrade request (fn [request]
-                           ;; (prn "ws:on-connect" (yu/tname))
-                           {:on-text (fn [channel message]
-                                       #_(prn "ws:on-text" message (yu/tname))
-                                       (yw/send! channel message))
-                            :on-close (fn [channel code reason]
-                                        #_(prn "ws:on-close" code reason (yu/tname)))
-                            :on-error (fn [channel cause]
-                                        #_(prn "on-error" (yu/tname) cause))})))))
+  (respond
+   (yw/upgrade request (fn [request]
+                         {:on-open (fn [channel]
+                                     (prn "ws:on-connect" (yu/tname)))
+                          :on-text (fn [channel message]
+                                     (prn "ws:on-text" message (yu/tname))
+                                     (yw/send! channel message))
+                          :on-close (fn [channel code reason]
+                                      (prn "ws:on-close" code reason (yu/tname)))
+                          :on-error (fn [channel cause]
+                                      (prn "on-error" (yu/tname) cause))}))))
 
 (def server nil)
 
@@ -91,9 +91,9 @@
                  :xnio/io-threads 2
                  :xnio/worker-threads 10
                  :xnio/dispatch true #_(ForkJoinPool/commonPool)}
-        handler (-> hello-http-handler
-                    #_(ymw/wrap-server-timing)
-                    #_(ymw/wrap-params)
+        handler (-> hello-websocket-handler
+                    (ymw/wrap-server-timing)
+                    (ymw/wrap-params)
                     )]
     (alter-var-root #'server (fn [server]
                                (when server (yt/stop! server))
