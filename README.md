@@ -17,17 +17,12 @@ ring responses.
 
 ## Usage
 
-### Reference
-
-See official [Ring documentation](https://github.com/ring-clojure/ring#documentation).
-
-
 ### Quick Start
 
 On deps.edn:
 
 ```clojure
-funcool/yetti {:git/tag "v6.0" :git/sha "4c8690e"
+funcool/yetti {:git/tag "v7.0" :git/sha "622a8dc"
                :git/url "https://github.com/funcool/yetti.git"}
 ```
 
@@ -44,14 +39,15 @@ In the REPL:
 
 ### Ring Async
 
-This adapter supports the ring async handlers:
+This adapter supports the ring async interface:
 
 ```clojure
-(require '[yetti.adapter :as yt])
+(require '[yetti.adapter :as yt]
+         '[yetti.response :as yrs])
 
 (defn app
   [request respond raise]
-  (send-response {:body "It works!"}))
+  (respond (yrs/response 200 "It works!")))
 
 (-> app
     (yt/server {:http/port 11010 :ring/async true})
@@ -69,13 +65,14 @@ Any ring handler can upgrade to websocket protocol, there is an example:
   [request]
   (if (yws/upgrade-request? request)
     (yws/upgrade request (fn [upgrade-request]
-                           {:on-error (fn [ws e])
+                           {:on-open  (fn [ws])
+                            :on-error (fn [ws e])
                             :on-close (fn [ws status-code reason])
-                            :on-text (fn [ws text-message])
-                            :on-bytes (fn [ws bytebuffer])
-                            :on-ping (fn [ws bytebuffer])
-                            :on-pong (fn [ws bytebuffer])}))
-    {:status 404}))
+                            :on-text  (fn [ws text-message])
+                            :on-bytes (fn [ws bytebuffers])
+                            :on-ping  (fn [ws bytebuffers])
+                            :on-pong  (fn [ws bytebuffers])}))
+    (yrs/response 404)))
 ```
 
 IWebSocket protocol allows you to read and write data on the `ws` value:
