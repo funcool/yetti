@@ -52,20 +52,17 @@
 (defn- write-response!
   "Update the HttpServerExchange using a response map."
   [^HttpServerExchange exchange response]
-  (try
-    (.setStatusCode exchange (or (resp/status response) 200))
-    (let [response-headers ^HeaderMap (.getResponseHeaders exchange)]
-      (doseq [[key val-or-vals] (resp/headers response)]
-        (let [key (HttpString/tryFromString ^String key)]
-          (if (coll? val-or-vals)
-            (.putAll response-headers key ^Collection val-or-vals)
-            (.put response-headers key ^String val-or-vals))))
-      (when-let [cookies (resp/cookies response)]
-        (yu/set-cookies! exchange cookies))
-      (with-open [output-stream (.getOutputStream exchange)]
-        (resp/write-body-to-stream response output-stream)))
-    (finally
-      (.endExchange ^HttpServerExchange exchange))))
+  (.setStatusCode exchange (or (resp/status response) 200))
+  (let [response-headers ^HeaderMap (.getResponseHeaders exchange)]
+    (doseq [[key val-or-vals] (resp/headers response)]
+      (let [key (HttpString/tryFromString ^String key)]
+        (if (coll? val-or-vals)
+          (.putAll response-headers key ^Collection val-or-vals)
+          (.put response-headers key ^String val-or-vals))))
+    (when-let [cookies (resp/cookies response)]
+      (yu/set-cookies! exchange cookies))
+    (with-open [output-stream (.getOutputStream exchange)]
+      (resp/write-body-to-stream response output-stream))))
 
 (defn- dispatch-exception
   [^HttpServerExchange exchange ^Throwable cause]
@@ -92,13 +89,19 @@
                      (write-response! exchange response))
                    (catch Throwable cause
                      (when (fn? on-error) (on-error cause))
-                     (dispatch-exception exchange cause))))
+                     (dispatch-exception exchange cause))
+                   (finally
+                     (.endExchange ^HttpServerExchange exchange))))
                (fn [cause]
-                 (when (fn? on-error) (on-error cause))
-                 (dispatch-exception exchange cause)))
+                 (try
+                   (when (fn? on-error) (on-error cause))
+                   (dispatch-exception exchange cause)
+                   (finally
+                     (.endExchange ^HttpServerExchange exchange)))))
               (catch Throwable cause
                 (when (fn? on-error) (on-error cause))
-                (dispatch-exception exchange cause))))
+                (dispatch-exception exchange cause)
+                (.endExchange ^HttpServerExchange exchange))))
 
           (dispatch-blocking [^HttpServerExchange exchange]
             (try
@@ -109,7 +112,10 @@
                   (write-response! exchange response)))
               (catch Throwable cause
                 (when (fn? on-error) (on-error cause))
-                (dispatch-exception exchange cause))))]
+                (dispatch-exception exchange cause))
+              (finally
+                (.endExchange ^HttpServerExchange exchange))))
+          ]
 
     (let [dispatch-fn (if async dispatch-async dispatch-blocking)]
       (cond
