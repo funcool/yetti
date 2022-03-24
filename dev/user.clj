@@ -55,23 +55,12 @@
                                :max-age 2000}}})
 
   ([request respond raise]
-   ;; (prn "hello-world-handler" "async" (yu/tname))
-   ;; (prn "request" "query-params:" (:query-params request))
-   ;; (prn "request" "body-params:" (:body-params request))
-   ;; (prn "request" "params:" (:params request))
-
    (respond
     (resp/response
      :status  200
      :body    (nippy/fast-freeze nippy/stress-data)
      :headers {"content-type" "application/octet-stream"
                "x-foo-bar" ["foo" "bar"]}))))
-
-     ;; :cookies {"sample-cookie" {:value (rand-int 1000)
-     ;;                            :same-site :lax
-     ;;                            :path "/foo"
-     ;;                            :domain "localhost"
-     ;;                            :max-age 2000}}))))
 
 (defn hello-websocket-handler
   [request respond raise]
@@ -89,17 +78,23 @@
 
 (def server nil)
 
+(defn- on-error
+  [cause request]
+  (resp/response 500 "custom server error"))
+
 (defn- start
   []
   (let [options {:ring/async true
                  :xnio/io-threads 2
                  :xnio/direct-buffers true
                  :xnio/worker-threads 6
+                 :http/on-error on-error
                  :xnio/dispatch true #_(ForkJoinPool/commonPool)}
         handler (-> hello-http-handler
                     (ymw/wrap-server-timing)
                     (ymw/wrap-params)
                     )]
+
     (alter-var-root #'server (fn [server]
                                (when server (yt/stop! server))
                                (-> (yt/server handler options)

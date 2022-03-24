@@ -79,42 +79,51 @@
   attached to Server."
   [handler-fn {:keys [:xnio/dispatch :ring/async :http/on-error] :as options}]
   (letfn [(dispatch-async [^HttpServerExchange exchange]
-            (try
-              (handler-fn
-               (req/request exchange)
-               (fn [response]
-                 (try
-                   (if-let [upgrade-fn (::ws/upgrade response)]
-                     (ws/upgrade-response exchange upgrade-fn options)
-                     (write-response! exchange response))
-                   (catch Throwable cause
-                     (when (fn? on-error) (on-error cause))
-                     (dispatch-exception exchange cause))
-                   (finally
-                     (.endExchange ^HttpServerExchange exchange))))
-               (fn [cause]
-                 (try
-                   (when (fn? on-error) (on-error cause))
-                   (dispatch-exception exchange cause)
-                   (finally
-                     (.endExchange ^HttpServerExchange exchange)))))
-              (catch Throwable cause
-                (when (fn? on-error) (on-error cause))
-                (dispatch-exception exchange cause)
-                (.endExchange ^HttpServerExchange exchange))))
+            (let [request (req/request exchange)]
+              (try
+                (handler-fn
+                 request
+                 (fn [response]
+                   (try
+                     (if-let [upgrade-fn (::ws/upgrade response)]
+                       (ws/upgrade-response exchange upgrade-fn options)
+                       (write-response! exchange response))
+                     (catch Throwable cause
+                       (write-response! exchange (handle-error cause request)))
+                     (finally
+                       (.endExchange ^HttpServerExchange exchange))))
+                 (fn [cause]
+                   (try
+                     (write-response! exchange (handle-error cause request))
+                     (finally
+                       (.endExchange ^HttpServerExchange exchange)))))
+                (catch Throwable cause
+                  (try
+                    (write-response! exchange (handle-error cause request))
+                    (finally
+                      (.endExchange ^HttpServerExchange exchange)))))))
 
           (dispatch-blocking [^HttpServerExchange exchange]
+            (let [request (req/request exchange)]
+              (try
+                (let [request (req/request exchange)
+                      response (handler-fn request)]
+                  (if-let [upgrade-fn (::ws/upgrade response)]
+                    (ws/upgrade-response exchange upgrade-fn options)
+                    (write-response! exchange response)))
+                (catch Throwable cause
+                  (write-response! exchange (handle-error cause request)))
+                (finally
+                  (.endExchange ^HttpServerExchange exchange)))))
+
+          (handle-error [cause request]
             (try
-              (let [request (req/request exchange)
-                    response (handler-fn request)]
-                (if-let [upgrade-fn (::ws/upgrade response)]
-                  (ws/upgrade-response exchange upgrade-fn options)
-                  (write-response! exchange response)))
+              (if (fn? on-error)
+                (on-error cause request)
+                (let [body (with-out-str (ctr/print-cause-trace cause))]
+                  (resp/response 500 body {"content-type" "text/plain"})))
               (catch Throwable cause
-                (when (fn? on-error) (on-error cause))
-                (dispatch-exception exchange cause))
-              (finally
-                (.endExchange ^HttpServerExchange exchange))))
+                (.printStackTrace cause))))
           ]
 
     (let [dispatch-fn (if async dispatch-async dispatch-blocking)]
