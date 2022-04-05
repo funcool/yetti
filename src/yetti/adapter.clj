@@ -64,44 +64,26 @@
     (with-open [output-stream (.getOutputStream exchange)]
       (resp/write-body-to-stream response output-stream))))
 
-(defn- dispatch-exception
-  [^HttpServerExchange exchange ^Throwable cause]
-  (try
-    (let [body (with-out-str (ctr/print-cause-trace cause))]
-      (->> (resp/response 500 body {"content-type" "text/plain"})
-           (write-response! exchange)))
-    (catch Throwable cause
-      ;; do nothing
-      )))
-
 (defn- create-handler
   "Creates an instance of the final jetty handler that will be
   attached to Server."
   [handler-fn {:keys [:xnio/dispatch :ring/async :http/on-error] :as options}]
   (letfn [(dispatch-async [^HttpServerExchange exchange]
             (let [request (req/request exchange)]
-              (try
-                (handler-fn
-                 request
-                 (fn [response]
-                   (try
-                     (if-let [upgrade-fn (::ws/upgrade response)]
-                       (ws/upgrade-response exchange upgrade-fn options)
-                       (write-response! exchange response))
-                     (catch Throwable cause
-                       (write-response! exchange (handle-error cause request)))
-                     (finally
-                       (.endExchange ^HttpServerExchange exchange))))
-                 (fn [cause]
-                   (try
-                     (write-response! exchange (handle-error cause request))
-                     (finally
-                       (.endExchange ^HttpServerExchange exchange)))))
-                (catch Throwable cause
-                  (try
-                    (write-response! exchange (handle-error cause request))
-                    (finally
-                      (.endExchange ^HttpServerExchange exchange)))))))
+              (handler-fn
+               request
+               (fn [response]
+                 (try
+                   (if-let [upgrade-fn (::ws/upgrade response)]
+                     (ws/upgrade-response exchange upgrade-fn options)
+                     (write-response! exchange response))
+                   (finally
+                     (.endExchange ^HttpServerExchange exchange))))
+               (fn [cause]
+                 (try
+                   (write-response! exchange (handle-error cause request))
+                   (finally
+                     (.endExchange ^HttpServerExchange exchange)))))))
 
           (dispatch-blocking [^HttpServerExchange exchange]
             (let [request (req/request exchange)]
@@ -117,13 +99,10 @@
                   (.endExchange ^HttpServerExchange exchange)))))
 
           (handle-error [cause request]
-            (try
-              (if (fn? on-error)
-                (on-error cause request)
-                (let [body (with-out-str (ctr/print-cause-trace cause))]
-                  (resp/response 500 body {"content-type" "text/plain"})))
-              (catch Throwable cause
-                (.printStackTrace cause))))
+            (if (fn? on-error)
+              (on-error cause request)
+              (let [body (with-out-str (ctr/print-cause-trace cause))]
+                (resp/response 500 body {"content-type" "text/plain"}))))
           ]
 
     (let [dispatch-fn (if async dispatch-async dispatch-blocking)]
@@ -139,13 +118,16 @@
         (false? dispatch)
         (reify HttpHandler
           (^void handleRequest [_ ^HttpServerExchange exchange]
-           (.dispatch exchange SameThreadExecutor/INSTANCE ^Runnable #(dispatch-fn exchange))))
+           (.dispatch exchange
+                      ^Executor SameThreadExecutor/INSTANCE
+                      ^Runnable #(dispatch-fn exchange))))
 
         :else
         (reify HttpHandler
           (^void handleRequest [_ ^HttpServerExchange exchange]
-           (.dispatch exchange ^Runnable #(do (.startBlocking exchange)
-                                              (dispatch-fn exchange)))))))))
+           (.dispatch exchange
+                      ^Runnable #(do (.startBlocking exchange)
+                                     (dispatch-fn exchange)))))))))
 
 (defn- create-server
   "Construct a Jetty Server instance."
