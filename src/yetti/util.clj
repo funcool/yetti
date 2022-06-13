@@ -33,8 +33,7 @@
 (def default-temp-dir
   (Paths/get "/tmp/undertow/" (into-array String [])))
 
-(def default-max-item-size
-  (* 1024 1024 5)) ; 5 MiB
+(def default-max-item-size -1) ;; Disabled
 
 (defn tname
   []
@@ -110,18 +109,17 @@
 (defn parse-form-data
   ([request] (parse-form-data request {}))
   ([{:keys [exchange] :as request} {:keys [key-fn] :or {key-fn keyword} :as options}]
-   (let [factory  (parser-factory options)
-         parser   (.createParser ^FormParserFactory factory
-                                 ^HttpServerExchange exchange)
-         form     (some-> parser .parseBlocking)]
-     (into {}
-           (comp
-            (mapcat (fn [^String k]
-                      (map (partial form-item->map k) (.get form k))))
-            (map (fn [{:keys [name value] :as upload}]
-                   [(key-fn name)
-                    (or value upload)])))
-           (seq form)))))
+   (let [factory (parser-factory options)
+         parser  (.createParser ^FormParserFactory factory
+                                ^HttpServerExchange exchange)
+         form    (some-> parser .parseBlocking)
+         xf      (comp
+                  (mapcat (fn [^String k]
+                            (map (partial form-item->map k) (.get form k))))
+                  (map (fn [{:keys [name value] :as upload}]
+                         [(key-fn name)
+                          (or value upload)])))]
+     (into {} xf (seq form)))))
 
 (defn get-request-header
   [^HttpServerExchange exchange ^String name]
