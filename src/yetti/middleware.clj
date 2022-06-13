@@ -25,7 +25,7 @@
                (if (and (string? mtype)
                         (or (str/starts-with? mtype "application/x-www-form-urlencoded")
                             (str/starts-with? mtype "multipart/form-data")))
-                 (let [params (yu/parse-form-data request)]
+                 (let [params (yu/parse-form-data request options)]
                    (-> request
                        (assoc :body-params params)
                        (update :params merge params)))
