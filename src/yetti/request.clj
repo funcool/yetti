@@ -53,31 +53,11 @@
   (protocol        [req])
   (headers         [req])
   (body            [req])
-  (get-header [req name]))
+  (get-header      [req name]))
 
 (defprotocol RequestWithCookies
   (cookies         [req])
   (get-cookie      [req name]))
-
-(defprotocol StreamableRequestBody
-  "A protocol for reading the request body as an input stream."
-  (-body-stream [body request]))
-
-(defn ^java.io.InputStream body-stream
-  "Given a request map, return an input stream to read the body."
-  [request]
-  (-body-stream (body request) request))
-
-(extend-protocol StreamableRequestBody
-  (Class/forName "[B")
-  (-body-stream [bs _] (java.io.ByteArrayInputStream. ^bytes bs))
-  java.io.InputStream
-  (-body-stream [stream _] stream)
-  String
-  (-body-stream [^String s request]
-    (java.io.ByteArrayInputStream. (.getBytes s "UTF-8")))
-  nil
-  (-body-stream [_ _] nil))
 
 (defrecord ExchangeWrapper [^Keyword method
                             ^String path
@@ -85,7 +65,7 @@
   Request
   (method [_]          method)
   (path [_]            path)
-  (body [this]         this)
+  (body [_]            (.getInputStream exchange))
   (headers [_]         (yu/get-request-headers exchange))
   (query [_]           (.getQueryString exchange))
   (server-port [_]     (.. exchange getDestinationAddress getPort))
@@ -97,10 +77,7 @@
 
   RequestWithCookies
   (cookies [_]         (yu/get-request-cookies exchange))
-  (get-cookie [_ name] (yu/get-request-cookie exchange name))
-
-  StreamableRequestBody
-  (-body-stream [_ _] (.getInputStream exchange)))
+  (get-cookie [_ name] (yu/get-request-cookie exchange name)))
 
 (defn request
   "Create the request from the HttpServerExchange."
