@@ -107,7 +107,7 @@
                    (cond-> (boolean? http-only)
                      (.setHttpOnly ^Boolean http-only))
                    (cond-> (int? max-age)
-                     (.setMaxAge ^Integer max-age))
+                     (.setMaxAge ^Integer (int max-age)))
                    (cond-> (instance? Duration max-age)
                      (.setMaxAge ^Integer (int (.getSeconds ^Duration max-age))))
                    (cond-> (instance? Instant expires)
