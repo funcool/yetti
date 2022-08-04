@@ -24,6 +24,7 @@
    io.undertow.util.HttpString
    java.nio.file.Paths
    java.time.Instant
+   java.time.Duration
    java.util.Date
    java.util.Deque
    java.util.Map
@@ -100,7 +101,10 @@
                    (cond-> secure    (.setSecure ^Boolean secure))
                    (cond-> path      (.setPath ^String path))
                    (cond-> domain    (.setDomain ^String domain))
-                   (cond-> max-age   (.setMaxAge ^Integer (int max-age)))
+                   (cond-> (int? max-age)
+                     (.setMaxAge ^Integer max-age))
+                   (cond-> (instance? Duration max-age)
+                     (.setMaxAge ^Integer (.getSeconds ^Duration max-age)))
                    (cond-> (instance? Instant expires)
                      (.setExpires ^Date (Date/from expires)))
                    (cond-> (instance? Date expires)
