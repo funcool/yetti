@@ -22,11 +22,13 @@
    io.undertow.util.HeaderMap
    io.undertow.util.HeaderValues
    io.undertow.util.HttpString
-   yetti.util.ByteBufferHelpers
    java.nio.file.Paths
+   java.time.Instant
+   java.util.Date
    java.util.Deque
    java.util.Map
-   java.util.concurrent.Executor))
+   java.util.concurrent.Executor
+   yetti.util.ByteBufferHelpers))
 
 (set! *warn-on-reflection* true)
 
@@ -99,7 +101,10 @@
                    (cond-> path      (.setPath ^String path))
                    (cond-> domain    (.setDomain ^String domain))
                    (cond-> max-age   (.setMaxAge ^Integer (int max-age)))
-                   (cond-> expires   (.setExpires ^java.util.Date expires))
+                   (cond-> (instance? Instant expires)
+                     (.setExpires ^Date (Date/from expires)))
+                   (cond-> (instance? Date expires)
+                     (.setExpires ^Date expires))
                    (cond-> same-site (.setSameSiteMode (case same-site
                                                          :lax "Lax"
                                                          :strict "Strict"
