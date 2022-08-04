@@ -96,23 +96,32 @@
   [^HttpServerExchange exchange cookies]
   (let [^Map rcookies (.getResponseCookies exchange)]
     (doseq [[k cookie-map] cookies]
-      (let [{:keys [path value domain max-age expires same-site secure]} cookie-map
+      (let [{:keys [path value domain max-age expires same-site secure http-only]} cookie-map
             item (doto (CookieImpl. ^String k ^String (str value))
-                   (cond-> secure    (.setSecure ^Boolean secure))
-                   (cond-> path      (.setPath ^String path))
-                   (cond-> domain    (.setDomain ^String domain))
+                   (cond-> (boolean? secure)
+                     (.setSecure ^Boolean secure))
+                   (cond-> (string? path)
+                     (.setPath ^String path))
+                   (cond-> (string? domain)
+                     (.setDomain ^String domain))
+                   (cond-> (boolean? http-only)
+                     (.setHttpOnly ^Boolean http-only))
                    (cond-> (int? max-age)
                      (.setMaxAge ^Integer max-age))
                    (cond-> (instance? Duration max-age)
-                     (.setMaxAge ^Integer (.getSeconds ^Duration max-age)))
+                     (.setMaxAge ^Integer (int (.getSeconds ^Duration max-age))))
                    (cond-> (instance? Instant expires)
                      (.setExpires ^Date (Date/from expires)))
                    (cond-> (instance? Date expires)
                      (.setExpires ^Date expires))
-                   (cond-> same-site (.setSameSiteMode (case same-site
-                                                         :lax "Lax"
-                                                         :strict "Strict"
-                                                         :none "None"))))]
+                   (cond-> (keyword? same-site)
+                     (.setSameSiteMode (case same-site
+                                         :lax "Lax"
+                                         :strict "Strict"
+                                         :none "None")))
+                   (cond-> (string? same-site)
+                     (.setSameSiteMode ^Strict same-site)))]
+
         (.put ^Map rcookies ^String k ^Cookie item)))))
 
 (defn parse-form-data
