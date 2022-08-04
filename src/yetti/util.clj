@@ -96,10 +96,12 @@
   [^HttpServerExchange exchange cookies]
   (let [^Map rcookies (.getResponseCookies exchange)]
     (doseq [[k cookie-map] cookies]
-      (let [{:keys [path value domain max-age expires same-site secure http-only]} cookie-map
+      (let [{:keys [path value domain max-age expires same-site secure http-only comment]} cookie-map
             item (doto (CookieImpl. ^String k ^String (str value))
                    (cond-> (boolean? secure)
                      (.setSecure ^Boolean secure))
+                   (cond-> (string? comment)
+                     (.setComment ^String comment))
                    (cond-> (string? path)
                      (.setPath ^String path))
                    (cond-> (string? domain)
