@@ -87,9 +87,11 @@ public class WebSocketListenerWrapper extends AbstractReceiveListener {
   }
 
   public void onError(WebSocketChannel channel, Throwable cause) {
-    if (this._onError != null) {
-      this._onError.invoke(channel, cause);
-    } else {
+    try {
+      if (this._onError != null) {
+        this._onError.invoke(channel, cause);
+      }
+    } finally {
       super.onError(channel, cause);
     }
   }
