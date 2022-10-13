@@ -22,7 +22,7 @@ ring responses.
 On deps.edn:
 
 ```clojure
-funcool/yetti {:git/tag "v9.9" :git/sha "f0a455d"
+funcool/yetti {:git/tag "v9.10" :git/sha "9744349"
                :git/url "https://github.com/funcool/yetti.git"}
 ```
 
