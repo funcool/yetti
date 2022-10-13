@@ -1,6 +1,6 @@
 {:paths ["src" "target/classes"]
  :deps
- {io.undertow/undertow-core {:mvn/version "2.2.17.Final"}}
+ {io.undertow/undertow-core {:mvn/version "2.3.0.Final"}}
 
  :aliases
  {:dev
