@@ -65,30 +65,31 @@
       (resp/write-body-to-stream response output-stream))))
 
 (defn- create-handler
-  "Creates an instance of the final jetty handler that will be
-  attached to Server."
+  "Creates an instance of the final handler that will be attached to
+  Server."
   [handler-fn {:keys [:xnio/dispatch :ring/async :http/on-error] :as options}]
   (letfn [(dispatch-async [^HttpServerExchange exchange]
             (let [request (req/request exchange)]
-              (handler-fn
-               request
-               (fn [response]
-                 (try
-                   (if-let [upgrade-fn (::ws/upgrade response)]
-                     (ws/upgrade-response exchange upgrade-fn options)
-                     (write-response! exchange response))
-                   (finally
-                     (.endExchange ^HttpServerExchange exchange))))
-               (fn [cause]
-                 (try
-                   (write-response! exchange (handle-error cause request))
-                   (finally
-                     (.endExchange ^HttpServerExchange exchange)))))))
+              (handler-fn request
+                          (fn [response]
+                            (when-not (.isResponseStarted exchange)
+                              (try
+                                (if-let [upgrade-fn (::ws/upgrade response)]
+                                  (ws/upgrade-response exchange upgrade-fn options)
+                                  (write-response! exchange response))
+                                (finally
+                                  (.endExchange ^HttpServerExchange exchange)))))
+                          (fn [cause]
+                            (when-not (.isResponseStarted exchange)
+                              (try
+                                (write-response! exchange (handle-error cause request))
+                                (finally
+                                  (.endExchange ^HttpServerExchange exchange))))))))
 
           (dispatch-blocking [^HttpServerExchange exchange]
             (let [request (req/request exchange)]
               (try
-                (let [request (req/request exchange)
+                (let [request  (req/request exchange)
                       response (handler-fn request)]
                   (if-let [upgrade-fn (::ws/upgrade response)]
                     (ws/upgrade-response exchange upgrade-fn options)
