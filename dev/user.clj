@@ -43,11 +43,11 @@
    ;; (prn "request" "query-params:" (:query-params request))
    ;; (prn "request" "body-params:" (:body-params request))
    ;; (prn "request" "params:" (:oparams request))
-
    {:status 200
-    :headers {"content-type" "application/octet-stream"
+    :headers {"content-type" "text/plain"
+              "test" 'foooo
               "x-foo-bar" ["baz" "foo"]}
-    :body (nippy/freeze nippy/stress-data)
+    :body    "hello world blocking\n"
     :cookies {"sample-cookie" {:value (rand-int 1000)
                                :same-site :lax
                                :path "/foo"
@@ -55,11 +55,13 @@
                                :max-age 2000}}})
 
   ([request respond raise]
+   (raise (ex-info "foo" {}))
+
    (respond
     (resp/response
      :status  200
-     :body    (nippy/fast-freeze nippy/stress-data)
-     :headers {"content-type" "application/octet-stream"
+     :body    "hello world async\n"
+     :headers {"content-type" "text/plain"
                "x-foo-bar" ["foo" "bar"]}))))
 
 (defn hello-websocket-handler
@@ -80,11 +82,11 @@
 
 (defn- on-error
   [cause request]
-  (resp/response 500 "custom server error"))
+  (prn "on-error" cause))
 
 (defn- start
   []
-  (let [options {:ring/async true
+  (let [options {:ring/async false
                  :xnio/io-threads 2
                  :xnio/direct-buffers true
                  :xnio/worker-threads 6
