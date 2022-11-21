@@ -20,6 +20,7 @@
    io.undertow.util.HeaderMap
    io.undertow.util.HttpString
    io.undertow.util.SameThreadExecutor
+   java.util.concurrent.atomic.AtomicBoolean
    java.util.concurrent.Executor))
 
 (set! *warn-on-reflection* true)
@@ -52,39 +53,45 @@
 (defn- write-response!
   "Update the HttpServerExchange using a response map."
   [^HttpServerExchange exchange response]
-  (.setStatusCode exchange (or (resp/status response) 200))
-  (let [response-headers ^HeaderMap (.getResponseHeaders exchange)]
-    (doseq [[key val-or-vals] (resp/headers response)]
-      (let [key (HttpString/tryFromString ^String key)]
-        (if (coll? val-or-vals)
-          (.putAll response-headers key ^Collection val-or-vals)
-          (.put response-headers key ^String val-or-vals))))
-    (when-let [cookies (resp/cookies response)]
-      (yu/set-cookies! exchange cookies))
-    (with-open [output-stream (.getOutputStream exchange)]
-      (resp/write-body-to-stream response output-stream))))
+  (when-not (.isResponseStarted exchange)
+    (.setStatusCode exchange (or (resp/status response) 200))
+    (let [response-headers ^HeaderMap (.getResponseHeaders exchange)]
+      (doseq [[key val-or-vals] (resp/headers response)]
+        (let [key (HttpString/tryFromString ^String key)]
+          (if (coll? val-or-vals)
+            (.putAll response-headers key ^Collection val-or-vals)
+            (.put response-headers key ^String val-or-vals))))
+      (when-let [cookies (resp/cookies response)]
+        (yu/set-cookies! exchange cookies))
+      (with-open [output-stream (.getOutputStream exchange)]
+        (resp/write-body-to-stream response output-stream)))))
 
 (defn- create-handler
   "Creates an instance of the final handler that will be attached to
   Server."
   [handler-fn {:keys [:xnio/dispatch :ring/async :http/on-error] :as options}]
   (letfn [(dispatch-async [^HttpServerExchange exchange]
-            (let [request (req/request exchange)]
-              (handler-fn request
-                          (fn [response]
-                            (when-not (.isResponseStarted exchange)
-                              (try
-                                (if-let [upgrade-fn (::ws/upgrade response)]
-                                  (ws/upgrade-response exchange upgrade-fn options)
-                                  (write-response! exchange response))
-                                (finally
-                                  (.endExchange ^HttpServerExchange exchange)))))
-                          (fn [cause]
-                            (when-not (.isResponseStarted exchange)
-                              (try
-                                (write-response! exchange (handle-error cause request))
-                                (finally
-                                  (.endExchange ^HttpServerExchange exchange))))))))
+            (let [request   (req/request exchange)
+                  responded (AtomicBoolean. false)]
+              (handler-fn
+               request
+               (fn [response]
+                 (when (.compareAndSet ^AtomicBoolean responded false true)
+                   (try
+                     (if-let [upgrade-fn (::ws/upgrade response)]
+                       (ws/upgrade-response exchange upgrade-fn options)
+                       (write-response! exchange response))
+                     (catch Throwable cause
+                       (when (fn? on-error)
+                         (on-error cause request)))
+                     (finally
+                       (.endExchange ^HttpServerExchange exchange)))))
+               (fn [cause]
+                 (when (.compareAndSet ^AtomicBoolean responded false true)
+                   (try
+                     (write-response! exchange (handle-error cause request))
+                     (finally
+                       (.endExchange ^HttpServerExchange exchange))))))))
 
           (dispatch-blocking [^HttpServerExchange exchange]
             (let [request (req/request exchange)]
@@ -100,10 +107,10 @@
                   (.endExchange ^HttpServerExchange exchange)))))
 
           (handle-error [cause request]
-            (if (fn? on-error)
-              (on-error cause request)
-              (let [body (with-out-str (ctr/print-cause-trace cause))]
-                (resp/response 500 body {"content-type" "text/plain"}))))
+            (when (fn? on-error)
+              (on-error cause request))
+            (let [body (with-out-str (ctr/print-cause-trace cause))]
+              (resp/response 500 body {"content-type" "text/plain"})))
           ]
 
     (let [dispatch-fn (if async dispatch-async dispatch-blocking)]

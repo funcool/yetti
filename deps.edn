@@ -13,7 +13,6 @@
     criterium/criterium {:mvn/version "RELEASE"}
     org.slf4j/slf4j-nop {:mvn/version "RELEASE"}
     com.taoensso/nippy {:mvn/version "3.1.1"}
-
     funcool/promesa {:mvn/version "8.0.450"}}
 
    :extra-paths ["test" "dev" "target/classes"]}
@@ -24,5 +23,5 @@
    :main-opts ["-m" "antq.core"]}
 
   :build
-  {:extra-deps {io.github.clojure/tools.build {:git/tag "v0.8.1" :git/sha "7d40500"}}
+  {:extra-deps {io.github.clojure/tools.build {:git/tag "v0.8.3" :git/sha "0d20256"}}
    :ns-default build}}}
