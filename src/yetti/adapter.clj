@@ -82,8 +82,9 @@
                        (ws/upgrade-response exchange upgrade-fn options)
                        (write-response! exchange response))
                      (catch Throwable cause
-                       (when (fn? on-error)
-                         (on-error cause request)))
+                       (if (fn? on-error)
+                         (on-error cause request)
+                         (.printStackTrace ^Throwable cause)))
                      (finally
                        (.endExchange ^HttpServerExchange exchange)))))
                (fn [cause]
@@ -107,8 +108,9 @@
                   (.endExchange ^HttpServerExchange exchange)))))
 
           (handle-error [cause request]
-            (when (fn? on-error)
-              (on-error cause request))
+            (if (fn? on-error)
+              (on-error cause request)
+              (.printStackTrace ^Throwable cause))
             (let [body (with-out-str (ctr/print-cause-trace cause))]
               (resp/response 500 body {"content-type" "text/plain"})))
           ]
