@@ -70,7 +70,9 @@
   "Creates an instance of the final handler that will be attached to
   Server."
   [handler-fn {:keys [:xnio/dispatch :ring/async :http/on-error] :as options}]
-  (letfn [(dispatch-async [^HttpServerExchange exchange]
+  (let [dispatch-fn
+        (if async
+          (fn [^HttpServerExchange exchange]
             (let [request   (req/request exchange)
                   responded (AtomicBoolean. false)]
               (handler-fn
@@ -84,38 +86,36 @@
                      (catch Throwable cause
                        (if (fn? on-error)
                          (on-error cause request)
-                         (.printStackTrace ^Throwable cause)))
+                         (ctr/print-cause-trace cause)))
                      (finally
                        (.endExchange ^HttpServerExchange exchange)))))
                (fn [cause]
                  (when (.compareAndSet ^AtomicBoolean responded false true)
                    (try
-                     (write-response! exchange (handle-error cause request))
+                     (let [body     (with-out-str (ctr/print-cause-trace cause))
+                           response (resp/response 500 body {"content-type" "text/plain"})]
+                       (write-response! exchange response))
                      (finally
                        (.endExchange ^HttpServerExchange exchange))))))))
 
-          (dispatch-blocking [^HttpServerExchange exchange]
-            (let [request (req/request exchange)]
+          (fn [^HttpServerExchange exchange]
+            (let [request  (req/request exchange)
+                  response (try
+                             (handler-fn request)
+                             (catch Throwable cause
+                               (let [body (with-out-str (ctr/print-cause-trace cause))]
+                                 (resp/response 500 body {"content-type" "text/plain"}))))]
               (try
-                (let [request  (req/request exchange)
-                      response (handler-fn request)]
-                  (if-let [upgrade-fn (::ws/upgrade response)]
-                    (ws/upgrade-response exchange upgrade-fn options)
-                    (write-response! exchange response)))
+                (if-let [upgrade-fn (::ws/upgrade response)]
+                  (ws/upgrade-response exchange upgrade-fn options)
+                  (write-response! exchange response))
                 (catch Throwable cause
-                  (write-response! exchange (handle-error cause request)))
+                  (if (fn? on-error)
+                    (on-error cause request)
+                    (ctr/print-cause-trace cause)))
                 (finally
-                  (.endExchange ^HttpServerExchange exchange)))))
+                  (.endExchange ^HttpServerExchange exchange))))))]
 
-          (handle-error [cause request]
-            (if (fn? on-error)
-              (on-error cause request)
-              (.printStackTrace ^Throwable cause))
-            (let [body (with-out-str (ctr/print-cause-trace cause))]
-              (resp/response 500 body {"content-type" "text/plain"})))
-          ]
-
-    (let [dispatch-fn (if async dispatch-async dispatch-blocking)]
       (cond
         (instance? Executor dispatch)
         (reify HttpHandler
@@ -137,7 +137,7 @@
           (^void handleRequest [_ ^HttpServerExchange exchange]
            (.dispatch exchange
                       ^Runnable #(do (.startBlocking exchange)
-                                     (dispatch-fn exchange)))))))))
+                                     (dispatch-fn exchange))))))))
 
 (defn- create-server
   "Construct a Jetty Server instance."
