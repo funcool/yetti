@@ -60,6 +60,7 @@
                     (.setFileSizeThreshold 0)
                     (.setMaxIndividualFileSize item-max-size)
                     (.setTempFileLocation temp-dir)
+                    (.setDefaultEncoding "UTF-8")
                     (.setExecutor ^Executor executor))
         xform     (doto (FormEncodedDataDefinition.)
                     (.setDefaultEncoding "UTF-8"))]
