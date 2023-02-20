@@ -64,7 +64,7 @@
             (.put response-headers key ^String val-or-vals))))
       (when-let [cookies (resp/cookies response)]
         (yu/set-cookies! exchange cookies))
-      (with-open [output-stream (.getOutputStream exchange)]
+      (let [output-stream (.getOutputStream exchange)]
         (resp/write-body-to-stream response output-stream)))))
 
 (defn- create-handler
