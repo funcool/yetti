@@ -21,6 +21,7 @@
    io.undertow.util.HttpString
    io.undertow.util.SameThreadExecutor
    java.util.concurrent.atomic.AtomicBoolean
+   java.util.concurrent.ExecutorService
    java.util.concurrent.Executor))
 
 (set! *warn-on-reflection* true)

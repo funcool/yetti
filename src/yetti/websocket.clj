@@ -20,13 +20,15 @@
    io.undertow.websockets.core.CloseMessage
    io.undertow.websockets.core.WebSocketCallback
    io.undertow.websockets.core.WebSocketChannel
+   io.undertow.websockets.core.WebSocketUtils
    io.undertow.websockets.core.WebSockets
    io.undertow.websockets.extensions.PerMessageDeflateHandshake
    io.undertow.websockets.spi.WebSocketHttpExchange
-   io.undertow.websockets.core.WebSocketUtils
-   yetti.util.WebSocketListenerWrapper
+   java.nio.ByteBuffer
+   java.util.concurrent.CompletionException
+   java.util.concurrent.CompletableFuture
    org.xnio.Pooled
-   java.nio.ByteBuffer))
+   yetti.util.WebSocketListenerWrapper))
 
 (set! *warn-on-reflection* true)
 
@@ -50,7 +52,7 @@
 
 (def ^:private no-op (constantly nil))
 
-(defn wrap-callback
+(defn- fn->callback
   [cb]
   (reify WebSocketCallback
     (complete [_ _ _]
@@ -58,24 +60,60 @@
     (onError [_ _ _ cause]
       (cb cause))))
 
+(defn- cf->callback
+  [^CompletableFuture ft]
+  (reify WebSocketCallback
+    (complete [_ _ _]
+      (.complete ft nil))
+    (onError [_ _ _ cause]
+      (.completeExceptionally ft cause))))
+
+(defn- await-ft!
+  "Await completion of CompletableFuture and unwraps
+  CompletionException in case of exception is raised."
+  [^CompletableFuture ft]
+  (try
+    (.get ft)
+    (catch CompletionException cause
+      (if-let [cause' (.getCause cause)]
+        (throw cause')
+        (throw cause)))))
+
 (extend-protocol IWebSocketSend
   (Class/forName "[B")
   (-send!
-    ([ba channel] (-send! (ByteBuffer/wrap ba) channel))
-    ([ba channel cb] (-send! (ByteBuffer/wrap ba) channel cb)))
+    ([ba channel]
+     (-send! (ByteBuffer/wrap ba) channel))
+    ([ba channel cb]
+     (-send! (ByteBuffer/wrap ba) channel cb)))
 
   ByteBuffer
   (-send!
-    ([bb channel] (WebSockets/sendBinaryBlocking ^ByteBuffer bb ^WebSocketChannel channel))
-    ([bb channel cb] (WebSockets/sendBinary ^ByteBuffer bb
-                                            ^WebSocketChannel channel
-                                            ^WebSocketCallback (wrap-callback cb))))
+    ([bb channel]
+     (let [ft (CompletableFuture.)]
+       (WebSockets/sendBinary ^ByteBuffer bb
+                              ^WebSocketChannel channel
+                              ^WebSocketCallback (cf->callback ft))
+       (await-ft! ft)))
+
+    ([bb channel cb]
+     (WebSockets/sendBinary ^ByteBuffer bb
+                            ^WebSocketChannel channel
+                            ^WebSocketCallback (fn->callback cb))))
+
   String
   (-send!
-    ([s channel] (WebSockets/sendTextBlocking ^String s ^WebSocketChannel channel))
-    ([s channel cb] (WebSockets/sendText ^String s
-                                         ^WebSocketChannel channel
-                                         ^WebSocketCallback (wrap-callback cb)))))
+    ([s channel]
+     (let [ft (CompletableFuture.)]
+       (WebSockets/sendText ^String s
+                            ^WebSocketChannel channel
+                            ^WebSocketCallback (cf->callback ft))
+       (await-ft! ft)))
+
+    ([s channel cb]
+     (WebSockets/sendText ^String s
+                          ^WebSocketChannel channel
+                          ^WebSocketCallback (fn->callback cb)))))
 
 (extend-protocol IWebSocketPing
   (Class/forName "[B")
@@ -90,10 +128,17 @@
 
   ByteBuffer
   (-ping!
-    ([bb channel] (WebSockets/sendPingBlocking ^ByteBuffer bb ^WebSocketChannel channel))
-    ([bb channel cb] (WebSockets/sendPing ^ByteBuffer bb
-                                          ^WebSocketChannel channel
-                                          ^WebSocketCallback (wrap-callback cb)))))
+    ([bb channel]
+     (let [ft (CompletableFuture.)]
+       (WebSockets/sendPing ^ByteBuffer bb
+                            ^WebSocketChannel channel
+                            ^WebSocketCallback (cf->callback ft))
+       (await-ft! ft)))
+
+    ([bb channel cb]
+     (WebSockets/sendPing ^ByteBuffer bb
+                          ^WebSocketChannel channel
+                          ^WebSocketCallback (fn->callback cb)))))
 
 
 (extend-protocol IWebSocketPong
@@ -109,10 +154,17 @@
 
   ByteBuffer
   (-pong!
-    ([bb channel] (WebSockets/sendPongBlocking ^ByteBuffer bb ^WebSocketChannel channel))
-    ([bb channel cb] (WebSockets/sendPong ^ByteBuffer bb
-                                          ^WebSocketChannel channel
-                                          ^WebSocketCallback (wrap-callback cb)))))
+    ([bb channel]
+     (let [ft (CompletableFuture.)]
+       (WebSockets/sendPong ^ByteBuffer bb
+                            ^WebSocketChannel channel
+                            ^WebSocketCallback (cf->callback ft))
+       (await-ft! ft)))
+
+    ([bb channel cb]
+     (WebSockets/sendPong ^ByteBuffer bb
+                          ^WebSocketChannel channel
+                          ^WebSocketCallback (fn->callback cb)))))
 
 (extend-protocol IWebSocket
   WebSocketChannel
@@ -140,6 +192,18 @@
       (.. this (setIdleTimeout ^long (inst-ms ms)))))
   (connected? [this]
     (. this (isOpen))))
+
+(defn on-close!
+  "Adds on-close task to the websocket channel. Returns `channel`
+  instance."
+  [^WebSocketChannel channel callback]
+  (.addCloseTask channel
+                 (reify org.xnio.ChannelListener
+                   (handleEvent [_ event]
+                     (try
+                       (callback event)
+                       (catch Throwable cause)))))
+  channel)
 
 (defn upgrade-request?
   "Checks if a request is a websocket upgrade request."
