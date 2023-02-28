@@ -23,8 +23,8 @@
    io.undertow.util.HeaderValues
    io.undertow.util.HttpString
    java.nio.file.Paths
-   java.time.Instant
    java.time.Duration
+   java.time.Instant
    java.util.Date
    java.util.Deque
    java.util.Map

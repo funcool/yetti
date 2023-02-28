@@ -14,15 +14,15 @@
   (:import
    io.undertow.Undertow
    io.undertow.UndertowOptions
+   io.undertow.server.DefaultByteBufferPool
    io.undertow.server.HttpHandler
    io.undertow.server.HttpServerExchange
-   io.undertow.server.DefaultByteBufferPool
    io.undertow.util.HeaderMap
    io.undertow.util.HttpString
    io.undertow.util.SameThreadExecutor
+   java.util.concurrent.Executor
    java.util.concurrent.atomic.AtomicBoolean
-   java.util.concurrent.ExecutorService
-   java.util.concurrent.Executor))
+   java.util.function.BiConsumer))
 
 (set! *warn-on-reflection* true)
 
@@ -48,8 +48,13 @@
    :socket/write-timeout 300000
 
    :ring/async false
-   :websocket/idle-timeout 500000
-   })
+   :websocket/idle-timeout 500000})
+
+(defn dispatch!
+  ([^HttpServerExchange exchange ^Runnable f]
+   (.dispatch exchange f))
+  ([^HttpServerExchange exchange ^Executor executor ^Runnable f]
+   (.dispatch exchange executor f)))
 
 (defn- write-response!
   "Update the HttpServerExchange using a response map."
@@ -67,78 +72,94 @@
       (let [output-stream (.getOutputStream exchange)]
         (resp/write-body-to-stream response output-stream)))))
 
+(defn- dispatch-async-fn
+  [handler {:keys [:http/on-error] :as options}]
+  (fn [^HttpServerExchange exchange]
+    (let [request   (req/request exchange)
+          responded (AtomicBoolean. false)]
+      (handler
+       request
+       (fn [response]
+         (when (.compareAndSet ^AtomicBoolean responded false true)
+           (try
+             (if-let [upgrade-fn (::ws/upgrade response)]
+               (ws/upgrade-response exchange upgrade-fn options)
+               (write-response! exchange response))
+             (catch Throwable cause
+               (if (fn? on-error)
+                 (on-error cause request)
+                 (ctr/print-cause-trace cause)))
+             (finally
+               (.endExchange ^HttpServerExchange exchange)))))
+       (fn [cause]
+         (when (.compareAndSet ^AtomicBoolean responded false true)
+           (try
+             (let [trace    (with-out-str (ctr/print-cause-trace cause))
+                   response (resp/response 500 trace {"content-type" "text/plain"})]
+               (write-response! exchange response))
+             (finally
+               (.endExchange ^HttpServerExchange exchange)))))))))
+
+(defn- dispatch-sync-fn
+  [handler {:keys [:http/on-error] :as options}]
+  (letfn [(handle-error [cause request]
+            (let [trace (with-out-str (ctr/print-cause-trace cause))]
+              (if (fn? on-error)
+                (on-error cause request)
+                (println trace))
+              {::resp/status 500
+               ::resp/body trace
+               ::resp/headers {"content-type" "text/plain"}}))
+
+          (handle-response [response exchange request]
+            (try
+              (if-let [upgrade-fn (::ws/upgrade response)]
+                (ws/upgrade-response exchange upgrade-fn options)
+                (write-response! exchange response))
+              (catch Throwable cause
+                (if (fn? on-error)
+                  (on-error cause request)
+                  (ctr/print-cause-trace cause)))
+              (finally
+                (.endExchange ^HttpServerExchange exchange))))]
+
+    (fn [^HttpServerExchange exchange]
+      (let [request  (req/request exchange)
+            response (try
+                       (handler request)
+                       (catch Throwable cause
+                         (handle-error cause request)))]
+        (handle-response response exchange request)))))
+
 (defn- create-handler
   "Creates an instance of the final handler that will be attached to
   Server."
-  [handler-fn {:keys [:xnio/dispatch :ring/async :http/on-error] :as options}]
-  (let [dispatch-fn
-        (if async
-          (fn [^HttpServerExchange exchange]
-            (let [request   (req/request exchange)
-                  responded (AtomicBoolean. false)]
-              (handler-fn
-               request
-               (fn [response]
-                 (when (.compareAndSet ^AtomicBoolean responded false true)
-                   (try
-                     (if-let [upgrade-fn (::ws/upgrade response)]
-                       (ws/upgrade-response exchange upgrade-fn options)
-                       (write-response! exchange response))
-                     (catch Throwable cause
-                       (if (fn? on-error)
-                         (on-error cause request)
-                         (ctr/print-cause-trace cause)))
-                     (finally
-                       (.endExchange ^HttpServerExchange exchange)))))
-               (fn [cause]
-                 (when (.compareAndSet ^AtomicBoolean responded false true)
-                   (try
-                     (let [body     (with-out-str (ctr/print-cause-trace cause))
-                           response (resp/response 500 body {"content-type" "text/plain"})]
-                       (write-response! exchange response))
-                     (finally
-                       (.endExchange ^HttpServerExchange exchange))))))))
+  [handler-fn {:keys [:xnio/dispatch :ring/async] :as options}]
+  (let [dispatch-fn (if async
+                      (dispatch-async-fn handler-fn options)
+                      (dispatch-sync-fn handler-fn options))]
+    (cond
+      (instance? Executor dispatch)
+      (reify HttpHandler
+        (^void handleRequest [_ ^HttpServerExchange exchange]
+         (.dispatch exchange
+                    ^Executor dispatch
+                    ^Runnable #(do (.startBlocking exchange)
+                                   (dispatch-fn exchange)))))
 
-          (fn [^HttpServerExchange exchange]
-            (let [request  (req/request exchange)
-                  response (try
-                             (handler-fn request)
-                             (catch Throwable cause
-                               (let [body (with-out-str (ctr/print-cause-trace cause))]
-                                 (resp/response 500 body {"content-type" "text/plain"}))))]
-              (try
-                (if-let [upgrade-fn (::ws/upgrade response)]
-                  (ws/upgrade-response exchange upgrade-fn options)
-                  (write-response! exchange response))
-                (catch Throwable cause
-                  (if (fn? on-error)
-                    (on-error cause request)
-                    (ctr/print-cause-trace cause)))
-                (finally
-                  (.endExchange ^HttpServerExchange exchange))))))]
+      (false? dispatch)
+      (reify HttpHandler
+        (^void handleRequest [_ ^HttpServerExchange exchange]
+         (.dispatch exchange
+                    ^Executor SameThreadExecutor/INSTANCE
+                    ^Runnable #(dispatch-fn exchange))))
 
-      (cond
-        (instance? Executor dispatch)
-        (reify HttpHandler
-          (^void handleRequest [_ ^HttpServerExchange exchange]
-           (.dispatch exchange
-                      ^Executor dispatch
-                      ^Runnable #(do (.startBlocking exchange)
-                                     (dispatch-fn exchange)))))
-
-        (false? dispatch)
-        (reify HttpHandler
-          (^void handleRequest [_ ^HttpServerExchange exchange]
-           (.dispatch exchange
-                      ^Executor SameThreadExecutor/INSTANCE
-                      ^Runnable #(dispatch-fn exchange))))
-
-        :else
-        (reify HttpHandler
-          (^void handleRequest [_ ^HttpServerExchange exchange]
-           (.dispatch exchange
-                      ^Runnable #(do (.startBlocking exchange)
-                                     (dispatch-fn exchange))))))))
+      :else
+      (reify HttpHandler
+        (^void handleRequest [_ ^HttpServerExchange exchange]
+         (.dispatch exchange
+                    ^Runnable #(do (.startBlocking exchange)
+                                   (dispatch-fn exchange))))))))
 
 (defn- create-server
   "Construct a Jetty Server instance."

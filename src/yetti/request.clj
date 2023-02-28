@@ -36,6 +36,9 @@
   (:require [yetti.util :as yu])
   (:import
    clojure.lang.Keyword
+   org.xnio.XnioWorker
+   java.util.concurrent.Executor
+   io.undertow.server.ServerConnection
    io.undertow.server.HttpServerExchange))
 
 (set! *warn-on-reflection* true)
@@ -59,6 +62,9 @@
   (cookies         [req])
   (get-cookie      [req name]))
 
+(defprotocol UndertowRequest
+  (exchange [req] "Get internal exchange instance"))
+
 (defrecord ExchangeWrapper [^Keyword method
                             ^String path
                             ^HttpServerExchange exchange]
@@ -77,7 +83,16 @@
 
   RequestWithCookies
   (cookies [_]         (yu/get-request-cookies exchange))
-  (get-cookie [_ name] (yu/get-request-cookie exchange name)))
+  (get-cookie [_ name] (yu/get-request-cookie exchange name))
+
+  UndertowRequest
+  (exchange [_] exchange)
+
+  Executor
+  (execute [_ r]
+    (let [sconn (.getConnection exchange)
+          exc   (.getWorker ^ServerConnection sconn)]
+      (.execute ^Executor exc ^Runnable r))))
 
 (defn request
   "Create the request from the HttpServerExchange."
