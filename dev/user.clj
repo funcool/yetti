@@ -43,26 +43,23 @@
    ;; (prn "request" "query-params:" (:query-params request))
    ;; (prn "request" "body-params:" (:body-params request))
    ;; (prn "request" "params:" (:oparams request))
-   {:status 200
-    :headers {"content-type" "text/plain"
-              "test" 'foooo
-              "x-foo-bar" ["baz" "foo"]}
-    :body    "hello world blocking\n"
-    :cookies {"sample-cookie" {:value (rand-int 1000)
-                               :same-site :lax
-                               :path "/foo"
-                               :domain "localhost"
-                               :max-age 2000}}})
-
+   {::resp/status 200
+    ::resp/headers {"content-type" "text/plain"
+                    "test" "foooo"
+                    "x-foo-bar" ["baz" "foo"]}
+    ::resp/body    "hello world blocking\n"
+    ::resp/cookies {"sample-cookie" {:value (rand-int 1000)
+                                     :same-site :lax
+                                     :path "/foo"
+                                     :domain "localhost"
+                                     :max-age 2000}}})
   ([request respond raise]
-   (raise (ex-info "foo" {}))
-
+   ;; (raise (ex-info "foo" {}))
    (respond
-    (resp/response
-     :status  200
-     :body    "hello world async\n"
-     :headers {"content-type" "text/plain"
-               "x-foo-bar" ["foo" "bar"]}))))
+    {::resp/status  200
+     ::resp/body    "hello world async\n"
+     ::resp/headers {"content-type" "text/plain"
+                     "x-foo-bar" ["foo" "bar"]}})))
 
 (defn hello-websocket-handler
   [request respond raise]
@@ -86,7 +83,7 @@
 
 (defn- start
   []
-  (let [options {:ring/async false
+  (let [options {:ring/async true
                  :xnio/io-threads 2
                  :xnio/direct-buffers true
                  :xnio/worker-threads 6
