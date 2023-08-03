@@ -25,8 +25,9 @@
    io.undertow.websockets.extensions.PerMessageDeflateHandshake
    io.undertow.websockets.spi.WebSocketHttpExchange
    java.nio.ByteBuffer
-   java.util.concurrent.CompletionException
    java.util.concurrent.CompletableFuture
+   java.util.concurrent.CompletionException
+   java.util.concurrent.ExecutionException
    org.xnio.Pooled
    yetti.util.WebSocketListenerWrapper))
 
@@ -74,6 +75,10 @@
   [^CompletableFuture ft]
   (try
     (.get ft)
+    (catch ExecutionException cause
+      (if-let [cause' (.getCause cause)]
+        (throw cause')
+        (throw cause)))
     (catch CompletionException cause
       (if-let [cause' (.getCause cause)]
         (throw cause')
