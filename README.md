@@ -1,19 +1,24 @@
-# Undertow adapter for Ring
+# Undertow based HTTP server for Clojure
 
-[Ring](https://github.com/ring-clojure/ring) adapter for
-[Undertow](https://undertow.io/), with HTTP2C and WebSocket support.
+A pragmatic and efficient ring adapter for the high performance
+**undertow** http server.
 
-This adapter is intended to be used under a http proxy for TLS
-offloding (such that NGINX or HAPROXY); this is the reason there are
-no options for configure SSL/TLS. This is a practical decission to not
-maintain code that is almost never used on our own use cases.
+Relevant characteristics:
 
-It requires JDK >= 11.
+- Unified http and websocket handlers; there are no separate routings
+  for http and http. Any http request can be upgraded to websocket.
+- No HTTPS support; this is intended to be used behind http proxy
+  which is in most cases the responsible of handling TLS; this is a
+  practical decission to not maintain code that is almost never used
+  in practice (when serving content to the internet).
+- Based on ring-2.0 for performance reasons and it is the default, but
+  it also can work in a ring1 compliant mode.
+- By default uses Virtual Threads for request dispatching so, it
+  requires JDK >= 21 (although you have the option of using platform
+  threads as well).
+- No ring-async support, with virtual threads there are no real need
+  for callback based API, so we opted to directly to no support it.
 
-**WARNING**: this adapter does not depends on ring becase it is based
-on ring-2.0 branch, and until ring-2.0 is released, some of the ring2
-protocols built-in in this adapter. It is compatible with the map based
-ring responses.
 
 ## Usage
 
@@ -22,82 +27,96 @@ ring responses.
 On deps.edn:
 
 ```clojure
-funcool/yetti {:git/tag "v9.12" :git/sha "51646d8"
+funcool/yetti {:git/tag "v10.0" :git/sha "51646d8"
                :git/url "https://github.com/funcool/yetti.git"}
 ```
 
 In the REPL:
 
 ```clojure
-(require '[yetti.adapter :as yt])
+(require '[yetti.adapter :as yt]
+         '[ring.response :as res])
 
-(-> app
+;; Using Response type
+
+(defn handler
+  [request]
+  {::res/status 200
+   ::res/body "hello world"})
+
+(-> handler
     (yt/server {:http/port 11010})
     (yt/start!))
 ```
 
-
-### Ring Async
-
-This adapter supports the ring async interface:
+If you want a ring1 compatible request:
 
 ```clojure
-(require '[yetti.adapter :as yt]
-         '[yetti.response :as yrs])
+(require '[yetti.adapter :as yt])
 
-(defn app
-  [request respond raise]
-  (respond (yrs/response 200 "It works!")))
+(defn handler
+  [{:keys [request-method] :as request}]
+  {:status 200
+   :body (str "hello world " (name request-method))})
 
-(-> app
-    (yt/server {:http/port 11010 :ring/async true})
+(-> handler
+    (yt/server {:http/port 11010 :ring/compat :ring1})
     (yt/start!))
 ```
+
+The possible values for `:ring/compat` are:
+
+ - `:ring2`: the default, receives a ring2 compatible, map-like type
+   (with main focus on performance)
+ - `:ring1`: receives a ring1 compliant map
+
+In all modes, the expected response can be in ring2 or ring1 format,
+the both are supported out of the box.
+
+
 
 ### WebSocket
 
 Any ring handler can upgrade to websocket protocol, there is an example:
 
 ```clojure
-(require '[yetti.websocket :as yws])
+(require '[yetti.websocket :as yws]
+         '[ring.response :as rres]
+         '[ring.websocket :as rws])
 
 (defn handler
   [request]
+  ;; We prefer use `yws/upgrade-request?` over `rws/upgrade-request?`
+  ;; in case if you use ring2 requests, for performance reasons.
   (if (yws/upgrade-request? request)
-    (yws/upgrade request (fn [upgrade-request]
-                           {:on-open  (fn [ws])
-                            :on-error (fn [ws e])
-                            :on-close (fn [ws status-code reason])
-                            :on-text  (fn [ws text-message])
-                            :on-bytes (fn [ws bytebuffers])
-                            :on-ping  (fn [ws bytebuffers])
-                            :on-pong  (fn [ws bytebuffers])}))
-    (yrs/response 404)))
+    {::rws/listener {:on-open  (fn [ws])
+                     :on-error (fn [ws e])
+                     :on-close (fn [ws status-code reason])
+                     :on-message  (fn [ws message])
+                     :on-ping  (fn [ws data])
+                     :on-pong  (fn [ws data])}}
+    {::rres/status 404}))
 ```
 
 IWebSocket protocol allows you to read and write data on the `ws` value:
 
-- `(yws/send! ws msg)`
-- `(yws/send! ws msg callback)`
-- `(yws/ping! ws msg)`
-- `(yws/ping! ws msg callback)`
-- `(yws/pong! ws msg)`
-- `(yws/pong! ws msg callback)`
-- `(yws/close! ws)`
-- `(yws/remote-addr ws)`
-- `(yws/idle-timeout! ws timeout)`
+- `(rws/send ws msg)`
+- `(rws/send ws msg callback)`
+- `(rws/ping ws msg)`
+- `(rws/pong ws msg)`
+- `(rws/close ws)`
+
+There also an additional API from this adapter:
+
+- `(yws/get-remote-addr ws)`
+- `(yws/set-idle-timeout! ws timeout)`
+
 
 Notice that we support different type of msg:
 
 * **byte[]** and **ByteBuffer**: send binary websocket message
 * **String**: send text websocket message
 
-A callback can also be specified for `send!`, `ping!` or `pong!`:
-
-```clojure
-(yws/send! ws msg (fn [err])
-;; The `err` is null if operation terminates successfuly
-```
 
 ## License
 

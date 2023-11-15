@@ -27,6 +27,7 @@
    java.time.Instant
    java.util.Date
    java.util.Deque
+   java.util.Iterator
    java.util.Map
    java.util.concurrent.Executor
    yetti.util.ByteBufferHelpers))
@@ -38,9 +39,11 @@
 
 (def default-max-item-size -1) ;; Disabled
 
-(defn tname
-  []
-  (.getName (Thread/currentThread)))
+(defn get-exchange
+  [request]
+  (or (:yetti.adapter/exchange request)
+      (:exchange request)))
+
 
 (defn- headers->map
   [^HeaderMap headers]
@@ -85,13 +88,14 @@
 
 (defn parse-query-data
   ([request] (parse-query-data request {}))
-  ([{:keys [exchange] :as request} {:keys [key-fn] :or {key-fn keyword}}]
-   (into {}
-         (map (fn [[^String k ^Deque v]]
-                (if (= 1 (.size v))
-                  [(key-fn k) (.peek v)]
-                  [(key-fn k) (into [] v)])))
-         (.getQueryParameters ^HttpServerExchange exchange))))
+  ([request {:keys [key-fn] :or {key-fn keyword}}]
+   (when-let [exchange (get-exchange request)]
+     (into {}
+           (map (fn [[^String k ^Deque v]]
+                  (if (= 1 (.size v))
+                    [(key-fn k) (.peek v)]
+                    [(key-fn k) (into [] v)])))
+           (.getQueryParameters ^HttpServerExchange exchange)))))
 
 (defn set-cookies!
   [^HttpServerExchange exchange cookies]
@@ -129,22 +133,23 @@
 
 (defn parse-form-data
   ([request] (parse-form-data request {}))
-  ([{:keys [exchange] :as request} {:keys [key-fn] :or {key-fn keyword} :as options}]
-   (let [factory (parser-factory options)
-         parser  (.createParser ^FormParserFactory factory
-                                ^HttpServerExchange exchange)
-         form    (some-> parser .parseBlocking)
-         xf      (comp
-                  (mapcat (fn [^String k]
-                            (map (partial form-item->map k) (.get form k))))
-                  (map (fn [{:keys [name value] :as upload}]
-                         [(key-fn name)
-                          (or value upload)])))]
-     (into {} xf (seq form)))))
+  ([request {:keys [key-fn] :or {key-fn keyword} :as options}]
+   (when-let [exchange (get-exchange request)]
+     (let [factory (parser-factory options)
+           parser  (.createParser ^FormParserFactory factory
+                                  ^HttpServerExchange exchange)
+           form    (some-> parser .parseBlocking)
+           xf      (comp
+                    (mapcat (fn [^String k]
+                              (map (partial form-item->map k) (.get form k))))
+                    (map (fn [{:keys [name value] :as upload}]
+                           [(key-fn name)
+                            (or value upload)])))]
+       (into {} xf (seq form))))))
 
 (defn get-request-header
   [^HttpServerExchange exchange ^String name]
-  (let [^HeaderMap headers  (.getRequestHeaders exchange)]
+  (let [^HeaderMap headers (.getRequestHeaders exchange)]
     (when-let [^HeaderValues entry (.get headers (HttpString/tryFromString name))]
       (if (= 1 (.size entry))
         (.getFirst entry)
@@ -153,7 +158,15 @@
 (defn get-request-headers
   "Creates a name/value map of all the request headers."
   [^HttpServerExchange exchange]
-  (headers->map (.getRequestHeaders exchange)))
+  (let [^HeaderMap headers (.getRequestHeaders exchange)
+        ^Iterator it (.iterator headers)]
+    (loop [m {}]
+      (if (.hasNext it)
+        (let [hvs ^HeaderValues (.next it)
+              hk (-> hvs .getHeaderName .toString .toLowerCase)
+              hv (if (= 1 (.size hvs)) (.getFirst hvs) (str/join "," hvs))]
+          (recur (assoc m hk hv)))
+        m))))
 
 (defn- parse-cookie
   [^Cookie cookie]

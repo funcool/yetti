@@ -5,39 +5,38 @@
 ;; Copyright © Andrey Antukh <niwi@niwi.nz>
 
 (ns yetti.middleware
-  "Undertow based middleware."
+  "Yetti specific middlewates that works with the native Request type."
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [yetti.request :as req]
-   [yetti.response :as resp]
+   [ring.request :as rreq]
+   [ring.response :as rres]
+   [yetti.request :as yrq]
    [yetti.util :as yu]))
 
 (defn wrap-params
   ([handler] (wrap-params handler {}))
   ([handler options]
-   (letfn [(process-request [request]
-             (let [qparams (yu/parse-query-data request options)
-                   request (-> request
-                               (assoc :query-params qparams)
-                               (update :params merge qparams))
-                   mtype   (req/get-header request "content-type")]
-               (if (and (string? mtype)
-                        (or (str/starts-with? mtype "application/x-www-form-urlencoded")
-                            (str/starts-with? mtype "multipart/form-data")))
-                 (let [params (yu/parse-form-data request options)]
-                   (-> request
-                       (assoc :body-params params)
-                       (update :params merge params)))
-                 request)))]
-     (fn
-       ([request] (handler (process-request request)))
-       ([request respond raise]
-        (try
-          (let [request (process-request request)]
-            (handler request respond raise))
-          (catch Exception cause
-            (raise cause))))))))
+   (fn [request]
+     (let [qparams (yu/parse-query-data request options)
+           request (if (yrq/request? request)
+                     (-> request
+                         (assoc :query-params qparams)
+                         (update :params merge qparams))
+                     (-> request
+                         (assoc ::rreq/query-params qparams)
+                         (update ::rreq/params merge qparams)))
+
+           mtype   (rreq/get-header request "content-type")
+           request (if (and (string? mtype)
+                            (or (str/starts-with? mtype "application/x-www-form-urlencoded")
+                                (str/starts-with? mtype "multipart/form-data")))
+                     (let [params (yu/parse-form-data request options)]
+                       (-> request
+                           (assoc :body-params params)
+                           (update :params merge params)))
+                     request)]
+       (handler request)))))
 
 (defn wrap-server-timing
   [handler]
@@ -46,11 +45,9 @@
 
           (update-headers [headers start]
             (assoc headers "Server-Timing" (str "total;dur=" (get-age start))))]
-    (fn
-      ([request]
-       (let [start (System/nanoTime)]
-         (-> (handler request)
-             (update :headers update-headers start))))
-      ([request respond raise]
-       (let [start (System/nanoTime)]
-         (handler request #(respond (update % :headers update-headers start)) raise))))))
+
+    (fn [request]
+      (let [start (System/nanoTime)]
+        (-> (handler request)
+            (update ::rres/headers update-headers start))))))
+

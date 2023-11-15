@@ -7,8 +7,11 @@
 (ns yetti.websocket
   (:require
    [clojure.string :as str]
+   [ring.request :as rreq]
+   [ring.websocket :as rws]
+   [ring.websocket.protocols :as rwp]
    [yetti.request :as req]
-   [yetti.util :as util])
+   [yetti.util :as yu])
   (:import
    clojure.lang.IFn
    io.undertow.server.HttpServerExchange
@@ -28,38 +31,19 @@
    java.util.concurrent.CompletableFuture
    java.util.concurrent.CompletionException
    java.util.concurrent.ExecutionException
+   java.util.concurrent.atomic.AtomicBoolean
    org.xnio.Pooled
    yetti.util.WebSocketListenerWrapper))
 
 (set! *warn-on-reflection* true)
 
-(defprotocol IWebSocket
-  (send! [this msg] [this msg cb])
-  (ping! [this msg] [this msg cb])
-  (pong! [this msg] [this msg cb])
-  (close! [this] [this status-code reason])
-  (remote-addr [this])
-  (idle-timeout! [this ms])
-  (connected? [this]))
-
-(defprotocol IWebSocketSend
-  (-send! [x ws] [x ws cb] "How to encode content sent to the WebSocket clients"))
-
-(defprotocol IWebSocketPing
-  (-ping! [x ws] [x ws cb] "How to encode bytes sent with a ping"))
-
-(defprotocol IWebSocketPong
-  (-pong! [x ws] [x ws cb] "How to encode bytes sent with a pong"))
-
-(def ^:private no-op (constantly nil))
-
 (defn- fn->callback
-  [cb]
+  [succeed fail]
   (reify WebSocketCallback
     (complete [_ _ _]
-      (cb nil))
+      (succeed))
     (onError [_ _ _ cause]
-      (cb cause))))
+      (fail cause))))
 
 (defn- cf->callback
   [^CompletableFuture ft]
@@ -69,194 +53,164 @@
     (onError [_ _ _ cause]
       (.completeExceptionally ft cause))))
 
-(defn- await-ft!
-  "Await completion of CompletableFuture and unwraps
-  CompletionException in case of exception is raised."
-  [^CompletableFuture ft]
-  (try
-    (.get ft)
-    (catch ExecutionException cause
-      (if-let [cause' (.getCause cause)]
-        (throw cause')
-        (throw cause)))
-    (catch CompletionException cause
-      (if-let [cause' (.getCause cause)]
-        (throw cause')
-        (throw cause)))))
+(extend-type WebSocketChannel
+  rwp/Socket
+  (-open? [this]
+    (. this (isOpen)))
 
-(extend-protocol IWebSocketSend
-  (Class/forName "[B")
-  (-send!
-    ([ba channel]
-     (-send! (ByteBuffer/wrap ba) channel))
-    ([ba channel cb]
-     (-send! (ByteBuffer/wrap ba) channel cb)))
+  (-send [this msg]
+    (let [ft (CompletableFuture.)]
+      (cond
+        (string? msg)
+        (WebSockets/sendText ^String msg
+                             ^WebSocketChannel this
+                             ^WebSocketCallback (cf->callback ft))
 
-  ByteBuffer
-  (-send!
-    ([bb channel]
-     (let [ft (CompletableFuture.)]
-       (WebSockets/sendBinary ^ByteBuffer bb
-                              ^WebSocketChannel channel
-                              ^WebSocketCallback (cf->callback ft))
-       (await-ft! ft)))
-
-    ([bb channel cb]
-     (WebSockets/sendBinary ^ByteBuffer bb
-                            ^WebSocketChannel channel
-                            ^WebSocketCallback (fn->callback cb))))
-
-  String
-  (-send!
-    ([s channel]
-     (let [ft (CompletableFuture.)]
-       (WebSockets/sendText ^String s
-                            ^WebSocketChannel channel
-                            ^WebSocketCallback (cf->callback ft))
-       (await-ft! ft)))
-
-    ([s channel cb]
-     (WebSockets/sendText ^String s
-                          ^WebSocketChannel channel
-                          ^WebSocketCallback (fn->callback cb)))))
-
-(extend-protocol IWebSocketPing
-  (Class/forName "[B")
-  (-ping!
-    ([ba channel] (-ping! (ByteBuffer/wrap ba) channel))
-    ([ba channel cb] (-ping! (ByteBuffer/wrap ba) channel cb)))
-
-  String
-  (-ping!
-    ([s channel] (-ping! (WebSocketUtils/fromUtf8String s) channel))
-    ([s channel cb] (-ping! (WebSocketUtils/fromUtf8String s) channel cb)))
-
-  ByteBuffer
-  (-ping!
-    ([bb channel]
-     (let [ft (CompletableFuture.)]
-       (WebSockets/sendPing ^ByteBuffer bb
-                            ^WebSocketChannel channel
-                            ^WebSocketCallback (cf->callback ft))
-       (await-ft! ft)))
-
-    ([bb channel cb]
-     (WebSockets/sendPing ^ByteBuffer bb
-                          ^WebSocketChannel channel
-                          ^WebSocketCallback (fn->callback cb)))))
+        (bytes? msg)
+        (WebSockets/sendBinary ^ByteBuffer (ByteBuffer/wrap ^bytes msg)
+                               ^WebSocketChannel this
+                               ^WebSocketCallback (cf->callback ft))
 
 
-(extend-protocol IWebSocketPong
-  (Class/forName "[B")
-  (-pong!
-    ([ba channel] (-pong! (ByteBuffer/wrap ba) channel))
-    ([ba channel cb] (-pong! (ByteBuffer/wrap ba) channel cb)))
+        (instance? ByteBuffer msg)
+        (WebSockets/sendBinary ^ByteBuffer (ByteBuffer/wrap ^bytes msg)
+                               ^WebSocketChannel this
+                               ^WebSocketCallback (cf->callback ft))
 
-  String
-  (-pong!
-    ([s channel] (-pong! (WebSocketUtils/fromUtf8String s) channel))
-    ([s channel cb] (-pong! (WebSocketUtils/fromUtf8String s) channel cb)))
+        :else
+        (throw (IllegalArgumentException. "invalid message")))
 
-  ByteBuffer
-  (-pong!
-    ([bb channel]
-     (let [ft (CompletableFuture.)]
-       (WebSockets/sendPong ^ByteBuffer bb
-                            ^WebSocketChannel channel
-                            ^WebSocketCallback (cf->callback ft))
-       (await-ft! ft)))
+      (.get ft)))
 
-    ([bb channel cb]
-     (WebSockets/sendPong ^ByteBuffer bb
-                          ^WebSocketChannel channel
-                          ^WebSocketCallback (fn->callback cb)))))
+  (-ping [this msg]
+    (let [ft  (CompletableFuture.)
+          msg (cond
+                (bytes? msg) (ByteBuffer/wrap ^bytes msg)
+                (instance? ByteBuffer msg) msg
+                (string? msg) (WebSocketUtils/fromUtf8String ^String msg)
+                :else (throw (IllegalArgumentException. "invalid mesage type")))]
+      (WebSockets/sendPing ^ByteBuffer msg
+                           ^WebSocketChannel this
+                           ^WebSocketCallback (cf->callback ft))
+      (.get ft)))
 
-(extend-protocol IWebSocket
-  WebSocketChannel
-  (send!
-    ([this msg] (-send! msg this))
-    ([this msg cb] (-send! msg this cb)))
-  (ping!
-    ([this msg] (-ping! msg this))
-    ([this msg cb] (-ping! msg this cb)))
-  (pong!
-    ([this msg] (-pong! msg this))
-    ([this msg cb] (-pong! msg this cb)))
-  (close! [this]
-    (.. this (close)))
-  (close! [this code reason]
-    (.setCloseCode this code)
-    (.setCloseReason this reason)
+  (-pong [this msg]
+    (let [ft  (CompletableFuture.)
+          msg (cond
+                (bytes? msg) (ByteBuffer/wrap ^bytes msg)
+                (instance? ByteBuffer msg) msg
+                (string? msg) (WebSocketUtils/fromUtf8String ^String msg)
+                :else (throw (IllegalArgumentException. "invalid mesage type")))]
+      (WebSockets/sendPong ^ByteBuffer msg
+                           ^WebSocketChannel this
+                           ^WebSocketCallback (cf->callback ft))
+      (.get ft)))
+
+  (-close [this code reason]
+    (when (some? code)
+      (.setCloseCode this code))
+    (when (some? reason)
+      (.setCloseReason this reason))
     (.sendClose this)
     (.close this))
-  (remote-addr [this]
-    (.. this (getDestinationAddress)))
-  (idle-timeout! [this ms]
-    (if (integer? ms)
-      (.. this (setIdleTimeout ^long ms))
-      (.. this (setIdleTimeout ^long (inst-ms ms)))))
-  (connected? [this]
-    (. this (isOpen))))
 
-(defn on-close!
+  rwp/AsyncSocket
+  (-send-async [this msg succeed fail]
+    (cond
+      (string? msg)
+      (WebSockets/sendText ^String msg
+                           ^WebSocketChannel this
+                           ^WebSocketCallback (fn->callback succeed fail))
+
+      (bytes? msg)
+      (WebSockets/sendBinary ^ByteBuffer (ByteBuffer/wrap ^bytes msg)
+                             ^WebSocketChannel this
+                             ^WebSocketCallback (fn->callback succeed fail))
+
+      (instance? ByteBuffer msg)
+      (WebSockets/sendBinary ^ByteBuffer (ByteBuffer/wrap ^bytes msg)
+                             ^WebSocketChannel this
+                             ^WebSocketCallback (fn->callback succeed fail))
+
+      :else
+      (throw (IllegalArgumentException. "invalid message")))))
+
+(defn add-close-callback!
   "Adds on-close task to the websocket channel. Returns `channel`
   instance."
   [^WebSocketChannel channel callback]
   (.addCloseTask channel
                  (reify org.xnio.ChannelListener
-                   (handleEvent [_ event]
+                   (handleEvent [_ channel]
                      (try
-                       (callback event)
+                       (callback channel)
                        (catch Throwable cause)))))
   channel)
 
+(defn set-idle-timeout!
+  [^WebSocketChannel channel ms]
+  (if (integer? ms)
+    (.. channel (setIdleTimeout ^long ms))
+    (.. channel (setIdleTimeout ^long (inst-ms ms))))
+  channel)
+
+(defn get-remote-addr
+  [^WebSocketChannel channel]
+  (.. channel (getDestinationAddress)))
+
 (defn upgrade-request?
-  "Checks if a request is a websocket upgrade request."
+  "Checks if a request is a websocket upgrade request.
+
+  This is a ring2 aware, more efficient version of
+  `ring.websocket/upgrade-request?` function."
   [request]
-  (let [upgrade    (req/get-header request "upgrade")
-        connection (req/get-header request "connection")]
-    (and upgrade
-         connection
+  (let [upgrade    (rreq/get-header request "upgrade")
+        connection (rreq/get-header request "connection")]
+    (and (string? upgrade)
+         (string? connection)
          (str/includes? (str/lower-case upgrade) "websocket")
          (str/includes? (str/lower-case connection) "upgrade"))))
 
-(defn- create-websocket-receiver
-  [{:keys [on-error on-text on-close on-bytes on-ping on-pong]}]
-  (WebSocketListenerWrapper. on-text
-                             on-bytes
-                             on-ping
-                             on-pong
-                             on-error
-                             on-close))
+(defn- listener->handler
+  [listener]
+  (WebSocketProtocolHandshakeHandler.
+   (reify WebSocketConnectionCallback
+     (onConnect [_ exchange channel]
+       (let [setter     (.getReceiveSetter ^WebSocketChannel channel)
+             closed     (AtomicBoolean. false)
 
-(defn create-websocket-connecton-callback
-  ^WebSocketConnectionCallback
-  [on-connect {:keys [:websocket/idle-timeout]}]
-  (reify WebSocketConnectionCallback
-    (onConnect [_ exchange channel]
-      (some->> idle-timeout long (.setIdleTimeout channel))
-      (let [setter   (.getReceiveSetter ^WebSocketChannel channel)
-            handlers (on-connect exchange channel)]
+             on-message (fn [channel message]
+                          (rwp/on-message listener channel message))
+             on-pong    (fn [channel buffers]
+                          (rwp/on-pong listener channel (yu/copy-many buffers)))
+             on-ping    (fn [channel buffers]
+                          (rwp/on-ping listener channel (yu/copy-many buffers)))
+             on-error   (fn [channel cause]
+                          (when (.compareAndSet ^AtomicBoolean closed false true)
+                            (rwp/on-error listener channel cause)))
+             on-close   (fn [channel code reason]
+                          (when (.compareAndSet ^AtomicBoolean closed false true)
+                            (rwp/on-close listener channel code reason)))]
 
-        (when-let [on-open (:on-open handlers)]
-          (on-open channel))
+         (rwp/on-open listener channel)
 
-        (.set setter (create-websocket-receiver handlers))
-        (.resumeReceives ^WebSocketChannel channel)))))
+         (add-close-callback! channel #(on-close % -1 "connection interrumpted"))
+
+         (.set setter (WebSocketListenerWrapper. on-message
+                                                 on-ping
+                                                 on-pong
+                                                 on-error
+                                                 on-close))
+         (.resumeReceives ^WebSocketChannel channel))))))
+
 
 (defn upgrade-response
-  [^HttpServerExchange exchange on-connect options]
-  (let [callback (create-websocket-connecton-callback on-connect options)
-        handler  (WebSocketProtocolHandshakeHandler. callback)]
+  [^HttpServerExchange exchange listener options]
+
+  (assert (or (satisfies? rwp/Listener listener)
+              (fn? listener))
+          "listener should satisfy Listener protocol or be a callback")
+
+  (let [^WebSocketProtocolHandshakeHandler handler (listener->handler listener)]
     (.addExtension handler (PerMessageDeflateHandshake. false 6))
     (.handleRequest handler exchange)))
-
-(defn upgrade
-  "Returns a websocket upgrade response."
-  [request handler]
-  {::upgrade (fn [^WebSocketHttpExchange exchange ^WebSocketChannel channel]
-               (-> request
-                   (assoc ::exchange exchange)
-                   (assoc ::channel channel)
-                   (dissoc :body)
-                   (handler)))})

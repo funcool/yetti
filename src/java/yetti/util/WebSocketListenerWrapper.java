@@ -14,17 +14,15 @@ import io.undertow.websockets.core.CloseMessage;
 import io.undertow.websockets.core.WebSocketChannel;
 
 public class WebSocketListenerWrapper extends AbstractReceiveListener {
-  private final IFn _onText;
-  private final IFn _onBytes;
+  private final IFn _onMessage;
   private final IFn _onPing;
   private final IFn _onPong;
   private final IFn _onClose;
   private final IFn _onError;
 
-  public WebSocketListenerWrapper(IFn onText, IFn onBytes, IFn onPing, IFn onPong, IFn onError, IFn onClose) {
+  public WebSocketListenerWrapper(IFn onMessage, IFn onPing, IFn onPong, IFn onError, IFn onClose) {
     super();
-    this._onText = onText;
-    this._onBytes = onBytes;
+    this._onMessage = onMessage;
     this._onPing = onPing;
     this._onPong = onPong;
     this._onError = onError;
@@ -32,18 +30,18 @@ public class WebSocketListenerWrapper extends AbstractReceiveListener {
   }
 
   public void onFullTextMessage(WebSocketChannel channel, BufferedTextMessage message) throws java.io.IOException {
-    if (this._onText != null) {
-      this._onText.invoke(channel, message.getData());
+    if (this._onMessage != null) {
+      this._onMessage.invoke(channel, message.getData());
     } else {
       super.onFullTextMessage(channel, message);
     }
   }
 
   public void onFullBinaryMessage(WebSocketChannel channel, BufferedBinaryMessage message) throws java.io.IOException {
-    if (this._onBytes != null) {
+    if (this._onMessage != null) {
       var data = message.getData();
       try {
-        this._onBytes.invoke(channel, data.getResource());
+        this._onMessage.invoke(channel, data.getResource());
       } finally {
         data.free();
       }

@@ -8,9 +8,12 @@
   (:require
    [yetti.util :as yu]
    [yetti.websocket :as ws]
-   [yetti.request :as req]
-   [yetti.response :as resp]
-   [clojure.stacktrace :as ctr])
+   [yetti.request :as yrq]
+   [yetti.response :as yrs]
+   [ring.response :as rresp]
+   [ring.request :as rreq]
+   [clojure.stacktrace :as ctr]
+   [ring.websocket :as rws])
   (:import
    io.undertow.Undertow
    io.undertow.UndertowOptions
@@ -21,6 +24,7 @@
    io.undertow.util.HttpString
    io.undertow.util.SameThreadExecutor
    java.util.concurrent.Executor
+   java.util.concurrent.Executors
    java.util.concurrent.atomic.AtomicBoolean
    java.util.function.BiConsumer))
 
@@ -39,105 +43,66 @@
    :http/parse-timeout 30000
    :xnio/buffer-size (* 1024 16) ; 16 KiB
    :xnio/direct-buffers true
-   :xnio/dispatch true
-
+   :xnio/dispatch :virtual
+   :ring/compat :ring2
    :socket/tcp-nodelay true
    :socket/backlog 1024
    :socket/reuse-address true
    :socket/read-timeout 300000
    :socket/write-timeout 300000
-
-   :ring/async false
    :websocket/idle-timeout 500000})
+
+(def ^:private default-executor
+  (Executors/newVirtualThreadPerTaskExecutor))
 
 (defn dispatch!
   ([^HttpServerExchange exchange ^Runnable f]
-   (.dispatch exchange f))
+   (.dispatch exchange ^Executor default-executor f))
   ([^HttpServerExchange exchange ^Executor executor ^Runnable f]
    (.dispatch exchange executor f)))
 
-(defn- write-response!
-  "Update the HttpServerExchange using a response map."
-  [^HttpServerExchange exchange response]
-  (when-not (.isResponseStarted exchange)
-    (.setStatusCode exchange (or (resp/status response) 200))
-    (let [response-headers ^HeaderMap (.getResponseHeaders exchange)]
-      (doseq [[key val-or-vals] (resp/headers response)]
-        (let [key (HttpString/tryFromString ^String key)]
-          (if (coll? val-or-vals)
-            (.putAll response-headers key ^Collection val-or-vals)
-            (.put response-headers key ^String val-or-vals))))
-      (when-let [cookies (resp/cookies response)]
-        (yu/set-cookies! exchange cookies))
-      (let [output-stream (.getOutputStream exchange)]
-        (resp/write-body-to-stream response output-stream)))))
+(defn- handle-error
+  [request cause {:keys [:http/on-error] :as options}]
+  (let [trace (with-out-str (ctr/print-cause-trace cause))]
+    (if (fn? on-error)
+      (on-error cause request)
+      (println trace))
+    {::rresp/status 500
+     ::rresp/body trace
+     ::rresp/headers {"content-type" "text/plain"}}))
 
-(defn- dispatch-async-fn
-  [handler {:keys [:http/on-error] :as options}]
-  (fn [^HttpServerExchange exchange]
-    (let [request   (req/request exchange)
-          responded (AtomicBoolean. false)]
-      (handler
-       request
-       (fn [response]
-         (when (.compareAndSet ^AtomicBoolean responded false true)
-           (try
-             (if-let [upgrade-fn (::ws/upgrade response)]
-               (ws/upgrade-response exchange upgrade-fn options)
-               (write-response! exchange response))
-             (catch Throwable cause
-               (if (fn? on-error)
-                 (on-error cause request)
-                 (ctr/print-cause-trace cause)))
-             (finally
-               (.endExchange ^HttpServerExchange exchange)))))
-       (fn [cause]
-         (when (.compareAndSet ^AtomicBoolean responded false true)
-           (try
-             (let [trace    (with-out-str (ctr/print-cause-trace cause))
-                   response (resp/response 500 trace {"content-type" "text/plain"})]
-               (write-response! exchange response))
-             (finally
-               (.endExchange ^HttpServerExchange exchange)))))))))
+(defn- handle-response
+  [exchange request response {:keys [:http/on-error] :as options}]
+  (try
+    (if-let [listener (::rws/listener response)]
+      (ws/upgrade-response exchange listener options)
+      (yrs/write-response! exchange response))
+    (catch Throwable cause
+      (if (fn? on-error)
+        (on-error cause request)
+        (ctr/print-cause-trace cause)))
+    (finally
+      (.endExchange ^HttpServerExchange exchange))))
 
-(defn- dispatch-sync-fn
-  [handler {:keys [:http/on-error] :as options}]
-  (letfn [(handle-error [cause request]
-            (let [trace (with-out-str (ctr/print-cause-trace cause))]
-              (if (fn? on-error)
-                (on-error cause request)
-                (println trace))
-              {::resp/status 500
-               ::resp/body trace
-               ::resp/headers {"content-type" "text/plain"}}))
-
-          (handle-response [response exchange request]
-            (try
-              (if-let [upgrade-fn (::ws/upgrade response)]
-                (ws/upgrade-response exchange upgrade-fn options)
-                (write-response! exchange response))
-              (catch Throwable cause
-                (if (fn? on-error)
-                  (on-error cause request)
-                  (ctr/print-cause-trace cause)))
-              (finally
-                (.endExchange ^HttpServerExchange exchange))))]
+(defn- dispatch-fn
+  [handler {:keys [:http/on-error :ring/compat] :as options}]
+  (let [exchange->request (case compat
+                            :ring1 yrq/exchange->ring1-request
+                            :ring2 yrq/exchange->ring2-request)]
 
     (fn [^HttpServerExchange exchange]
-      (let [request  (req/request exchange)
+      (let [request  (exchange->request exchange)
             response (try
                        (handler request)
                        (catch Throwable cause
-                         (handle-error cause request)))]
-        (handle-response response exchange request)))))
+                         (handle-error request cause options)))]
+        (handle-response exchange request response options)))))
 
 (defn- create-handler
   "Creates an instance of the final handler that will be attached to
   Server."
-  [handler-fn {:keys [:xnio/dispatch :ring/async] :as options}]
-  (let [dispatch-fn (if async
-                      (dispatch-async-fn handler-fn options)
-                      (dispatch-sync-fn handler-fn options))]
+  [handler-fn {:keys [:xnio/dispatch] :as options}]
+  (let [dispatch-fn (dispatch-fn handler-fn options)]
     (cond
       (instance? Executor dispatch)
       (reify HttpHandler
@@ -146,6 +111,15 @@
                     ^Executor dispatch
                     ^Runnable #(do (.startBlocking exchange)
                                    (dispatch-fn exchange)))))
+
+      (= :virtual dispatch)
+      (let [executor (Executors/newVirtualThreadPerTaskExecutor)]
+        (reify HttpHandler
+          (^void handleRequest [_ ^HttpServerExchange exchange]
+           (.dispatch exchange
+                      ^Executor executor
+                      ^Runnable #(do (.startBlocking exchange)
+                                     (dispatch-fn exchange))))))
 
       (false? dispatch)
       (reify HttpHandler
@@ -162,7 +136,7 @@
                                    (dispatch-fn exchange))))))))
 
 (defn- create-server
-  "Construct a Jetty Server instance."
+  "Construct a Server instance."
   [handler {:keys [:http/port
                    :http/host
                    :http/idle-timeout
@@ -217,10 +191,9 @@
 
 (defn ^Undertow server
   "
-  Creates and confgures an instance of jetty server. This is a list of options
+  Creates and confgures an instance of the server. This is a list of options
   that you can provide:
 
-  :ring/async                    - enables the ring 1.6 async handler
   :http/port                     - the port to listen on (defaults to 11010)
   :http/host                     - the hostname to listen on, defaults to 'localhost'
   :http/idle-timeout             - the max idle time in ms for a connection (default to 200000)
@@ -230,11 +203,12 @@
   :http/max-multipart-body-size  - max size for multipart uploads (defaults to 12 MiB)
   :http/max-cookies              - max number of allowed cookies in the request (defaults to 32)
   :http/max-headers              - max number of allowed headers in the request (defaults to 64)
+  :ring/compat                   - ring compatibility mode: :ring2 (default), :ring2-map, :ring1
 
   :xnio/buffer-size              - default http IO buffe size (default 64 KiB)
   :xnio/direct-buffers           - use or not direct buffers (default to false)
   :xnio/dispatch                 - dispatch or not the body of the handler to the worker executor
-                                   (defaults to true, can be a custom executor instance)
+                                   (defaults to :virtual, can be a custom executor instance)
   :websocket/idle-timeout        - websocket specific idle timeout (defaults to 500000)
   "
   ([handler-fn] (server handler-fn {}))
@@ -244,7 +218,7 @@
      (create-server handler options))))
 
 (defn start!
-  "Starts the jetty server. It accepts an optional `options` parameter
+  "Starts the server. It accepts an optional `options` parameter
   that accepts the following attrs:
 
   :join - blocks the thread until the server is starts (defaults false)

@@ -32,8 +32,9 @@
 ;; OTHER DEALINGS IN THE SOFTWARE.
 
 (ns yetti.request
-  "Core protocols and functions for Ring 2 request maps."
-  (:require [yetti.util :as yu])
+  (:require
+   [yetti.util :as yu]
+   [ring.request :as rreq])
   (:import
    clojure.lang.Keyword
    org.xnio.XnioWorker
@@ -43,32 +44,12 @@
 
 (set! *warn-on-reflection* true)
 
-(defprotocol Request
-  "A protocol representing a HTTP request."
-  (server-port     [req])
-  (server-name     [req])
-  (remote-addr     [req])
-  (ssl-client-cert [req])
-  (method          [req])
-  (scheme          [req])
-  (path            [req])
-  (query           [req])
-  (protocol        [req])
-  (headers         [req])
-  (body            [req])
-  (get-header      [req name]))
-
-(defprotocol RequestWithCookies
+(defprotocol RequestCookies
   (cookies         [req])
   (get-cookie      [req name]))
 
-(defprotocol UndertowRequest
-  (exchange [req] "Get internal exchange instance"))
-
-(defrecord ExchangeWrapper [^Keyword method
-                            ^String path
-                            ^HttpServerExchange exchange]
-  Request
+(defrecord Request [^Keyword method ^String path ^HttpServerExchange exchange]
+  rreq/Request
   (method [_]          method)
   (path [_]            path)
   (body [_]            (.getInputStream exchange))
@@ -81,12 +62,9 @@
   (protocol [_]        (.. exchange getProtocol toString))
   (get-header [_ name] (yu/get-request-header exchange name))
 
-  RequestWithCookies
+  RequestCookies
   (cookies [_]         (yu/get-request-cookies exchange))
   (get-cookie [_ name] (yu/get-request-cookie exchange name))
-
-  UndertowRequest
-  (exchange [_] exchange)
 
   Executor
   (execute [_ r]
@@ -94,9 +72,29 @@
           exc   (.getWorker ^ServerConnection sconn)]
       (.execute ^Executor exc ^Runnable r))))
 
-(defn request
-  "Create the request from the HttpServerExchange."
+(defn request?
+  [o]
+  (instance? Request o))
+
+(defn exchange->ring1-request
+  {:no-doc true}
   [^HttpServerExchange exchange]
-  (let [method  (keyword (.. exchange getRequestMethod toString toLowerCase))
-        path    (.getRequestURI exchange)]
-    (ExchangeWrapper. ^Keyword method ^String path exchange)))
+  {:server-port (-> exchange .getDestinationAddress .getPort)
+   :server-name (.getHostName exchange)
+   :remote-addr (-> exchange .getSourceAddress .getAddress .getHostAddress)
+   :uri (.getRequestURI exchange)
+   :query-string (let [qs (.getQueryString exchange)] (if-not (.equals "" qs) qs))
+   :scheme (-> exchange .getRequestScheme keyword)
+   :request-method (-> exchange .getRequestMethod .toString .toLowerCase keyword)
+   :protocol (-> exchange .getProtocol .toString)
+   :headers (yu/get-request-headers exchange)
+   :body (if (.isBlocking exchange) (.getInputStream exchange))})
+
+(defn exchange->ring2-request
+  "Create the request from the HttpServerExchange."
+  {:no-doc true}
+  [^HttpServerExchange exchange]
+  (let [method (keyword (.. exchange getRequestMethod toString toLowerCase))
+        path   (.getRequestURI exchange)]
+    (Request. ^Keyword method ^String path exchange)))
+
