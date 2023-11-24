@@ -81,8 +81,8 @@ Any ring handler can upgrade to websocket protocol, there is an example:
 
 ```clojure
 (require '[yetti.websocket :as yws]
-         '[ring.response :as rres]
-         '[ring.websocket :as rws])
+         '[ring.response :as-alias rres]
+         '[ring.websocket :as-alias rws])
 
 (defn handler
   [request]

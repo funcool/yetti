@@ -22,13 +22,19 @@
    io.undertow.util.HeaderMap
    io.undertow.util.HeaderValues
    io.undertow.util.HttpString
+   io.undertow.util.Headers
+   java.lang.reflect.Field
    java.nio.file.Paths
    java.time.Duration
    java.time.Instant
+   java.util.Collections
    java.util.Date
    java.util.Deque
+   java.util.HashMap
    java.util.Iterator
    java.util.Map
+   java.util.Map
+   java.util.Map$Entry
    java.util.concurrent.Executor
    yetti.util.ByteBufferHelpers))
 
@@ -37,27 +43,26 @@
 (def default-temp-dir
   (Paths/get "/tmp/undertow/" (into-array String [])))
 
-(def default-max-item-size -1) ;; Disabled
-
 (defn get-exchange
   [request]
   (or (:yetti.adapter/exchange request)
       (:exchange request)))
 
-
 (defn- headers->map
   [^HeaderMap headers]
-  (into {}
-        (map (fn [^HeaderValues hvs]
-               [(-> hvs .getHeaderName .toString .toLowerCase)
-                (if (= 1 (.size hvs))
-                  (.getFirst hvs)
-                  (str/join "," hvs))])
-             (seq headers))))
+  (loop [m {}
+         c (.fastIterateNonEmpty headers)]
+    (if (pos? c)
+      (let [hvs ^HeaderValues (.fiCurrent headers c)
+            hk (.. hvs getHeaderName toString toLowerCase)
+            hv (if (= 1 (.size hvs)) (.getFirst hvs) (str/join "," hvs))]
+        (recur (assoc m hk hv)
+               (.fiNext headers c)))
+      m)))
 
 (defn parser-factory
   [{:keys [item-max-size temp-dir executor]
-    :or {item-max-size default-max-item-size
+    :or {item-max-size -1
          temp-dir default-temp-dir}}]
   (let [multipart (doto (MultiPartParserDefinition.)
                     (.setFileSizeThreshold 0)
@@ -75,27 +80,34 @@
   [^String k ^FormData$FormValue fval]
   (if (.isFileItem fval)
     (let [^FormData$FileItem fitem (.getFileItem fval)
-          headers (headers->map (.getHeaders fval))]
+          headers (headers->map (.getHeaders fval))
+          mtype   (get headers "content-type")]
       (cond-> {:name k
                :headers headers
                :filename (.getFileName fval)
                :path (.getFile fitem)
                :size (.getFileSize fitem)}
-        (contains? headers "content-type")
-        (assoc :mtype (get headers "content-type"))))
+        (some? mtype)
+        (assoc :mtype mtype)))
     {:value (.getValue fval)
      :name k}))
 
 (defn parse-query-data
   ([request] (parse-query-data request {}))
   ([request {:keys [key-fn] :or {key-fn keyword}}]
-   (when-let [exchange (get-exchange request)]
-     (into {}
-           (map (fn [[^String k ^Deque v]]
-                  (if (= 1 (.size v))
-                    [(key-fn k) (.peek v)]
-                    [(key-fn k) (into [] v)])))
-           (.getQueryParameters ^HttpServerExchange exchange)))))
+   (when-let [^HttpServerExchange exchange (get-exchange request)]
+     (let [params  (.getQueryParameters exchange)
+           entries (.entrySet ^Map params)
+           it      (.iterator entries)]
+       (loop [rs {}]
+         (if (.hasNext ^Iterator it)
+           (let [item (.next ^Iterator it)
+                 k    (.getKey ^Map$Entry item)
+                 v    (.getValue ^Map$Entry item)]
+             (if (= 1 (.size ^Deque v))
+               (recur (assoc rs (key-fn k) (.peek ^Deque v)))
+               (recur (assoc rs (key-fn k) (into [] v)))))
+           rs))))))
 
 (defn set-cookies!
   [^HttpServerExchange exchange cookies]
@@ -150,7 +162,7 @@
 (defn get-request-header
   [^HttpServerExchange exchange ^String name]
   (let [^HeaderMap headers (.getRequestHeaders exchange)]
-    (when-let [^HeaderValues entry (.get headers (HttpString/tryFromString name))]
+    (when-let [^HeaderValues entry (.get headers name)]
       (if (= 1 (.size entry))
         (.getFirst entry)
         (str/join "," entry)))))
@@ -158,15 +170,7 @@
 (defn get-request-headers
   "Creates a name/value map of all the request headers."
   [^HttpServerExchange exchange]
-  (let [^HeaderMap headers (.getRequestHeaders exchange)
-        ^Iterator it (.iterator headers)]
-    (loop [m {}]
-      (if (.hasNext it)
-        (let [hvs ^HeaderValues (.next it)
-              hk (-> hvs .getHeaderName .toString .toLowerCase)
-              hv (if (= 1 (.size hvs)) (.getFirst hvs) (str/join "," hvs))]
-          (recur (assoc m hk hv)))
-        m))))
+  (headers->map (.getRequestHeaders exchange)))
 
 (defn- parse-cookie
   [^Cookie cookie]
