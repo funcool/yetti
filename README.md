@@ -27,8 +27,10 @@ Relevant characteristics:
 On deps.edn:
 
 ```clojure
-funcool/yetti {:git/tag "v10.0" :git/sha "e13bf4d"
-               :git/url "https://github.com/funcool/yetti.git"}
+funcool/yetti
+{:git/tag "v10.0"
+ :git/sha "520613f"
+ :git/url "https://github.com/funcool/yetti.git"}
 ```
 
 In the REPL:
