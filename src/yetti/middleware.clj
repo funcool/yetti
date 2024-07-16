@@ -9,10 +9,9 @@
   (:require
    [clojure.java.io :as io]
    [clojure.string :as str]
-   [ring.request :as rreq]
-   [ring.response :as rres]
    [yetti.request :as yrq]
-   [yetti.util :as yu]))
+   [yetti.util :as yu]
+   [yetti.response :as-alias yrs]))
 
 (defn wrap-params
   ([handler] (wrap-params handler {}))
@@ -24,10 +23,10 @@
                          (assoc :query-params qparams)
                          (update :params merge qparams))
                      (-> request
-                         (assoc ::rreq/query-params qparams)
-                         (update ::rreq/params merge qparams)))
+                         (assoc ::yrq/query-params qparams)
+                         (update ::yrq/params merge qparams)))
 
-           mtype   (rreq/get-header request "content-type")
+           mtype   (yrq/get-header request "content-type")
            request (if (and (string? mtype)
                             (or (str/starts-with? mtype "application/x-www-form-urlencoded")
                                 (str/starts-with? mtype "multipart/form-data")))
@@ -49,5 +48,5 @@
     (fn [request]
       (let [start (System/nanoTime)]
         (-> (handler request)
-            (update ::rres/headers update-headers start))))))
+            (update ::yrs/headers update-headers start))))))
 

@@ -33,8 +33,7 @@
 
 (ns yetti.request
   (:require
-   [yetti.util :as yu]
-   [ring.request :as rreq])
+   [yetti.util :as yu])
   (:import
    clojure.lang.Keyword
    org.xnio.XnioWorker
@@ -44,12 +43,36 @@
 
 (set! *warn-on-reflection* true)
 
-(defprotocol RequestCookies
+(defprotocol IRequest
+  "A protocol representing a HTTP request."
+  (server-port     [req])
+  (server-name     [req])
+  (remote-addr     [req])
+  (ssl-client-cert [req])
+  (method          [req])
+  (scheme          [req])
+  (path            [req])
+  (query           [req])
+  (protocol        [req])
+  (headers         [req])
+  (body            [req])
+  (get-header      [req name]))
+
+(defprotocol IRequestCookies
   (cookies         [req])
   (get-cookie      [req name]))
 
+(defprotocol IStreamableRequestBody
+  "A protocol for reading the request body as an input stream."
+  (-body-stream [body request]))
+
+(defn ^java.io.InputStream body-stream
+  "Given a request map, return an input stream to read the body."
+  [request]
+  (-body-stream (body request) request))
+
 (defrecord Request [^Keyword method ^String path ^HttpServerExchange exchange]
-  rreq/Request
+  IRequest
   (method [_]          method)
   (path [_]            path)
   (body [_]            (.getInputStream exchange))
@@ -62,7 +85,7 @@
   (protocol [_]        (.. exchange getProtocol toString))
   (get-header [_ name] (yu/get-request-header exchange name))
 
-  RequestCookies
+  IRequestCookies
   (cookies [_]         (yu/get-request-cookies exchange))
   (get-cookie [_ name] (yu/get-request-cookie exchange name))
 
@@ -71,6 +94,13 @@
     (let [sconn (.getConnection exchange)
           exc   (.getWorker ^ServerConnection sconn)]
       (.execute ^Executor exc ^Runnable r))))
+
+(defn charset
+  "Given a request map, return the charset of the content-type header."
+  [request]
+  (when-let [content-type (get-header request "content-type")]
+    (second (re-find yu/re-charset content-type))))
+
 
 (defn request?
   [o]
@@ -97,4 +127,35 @@
   (let [method (keyword (.. exchange getRequestMethod toString toLowerCase))
         path   (.getRequestURI exchange)]
     (Request. ^Keyword method ^String path exchange)))
+
+(extend-protocol IRequest
+  clojure.lang.IPersistentMap
+  (server-port     [req] (::server-port     req (:server-port req)))
+  (server-name     [req] (::server-name     req (:server-name req)))
+  (remote-addr     [req] (::remote-addr     req (:remote-addr req)))
+  (ssl-client-cert [req] (::ssl-client-cert req (:ssl-client-cert req)))
+  (method          [req] (::method          req (:request-method req)))
+  (scheme          [req] (::scheme          req (:scheme req)))
+  (path            [req] (::path            req (:uri req)))
+  (query           [req] (::query           req (:query-string req)))
+  (protocol        [req] (::protocol        req (:protocol req)))
+  (headers         [req] (::headers         req (:headers req)))
+  (body            [req] (::body            req (:body req)))
+  (get-header [req name] (get (headers req) name)))
+
+(extend-protocol IStreamableRequestBody
+  (Class/forName "[B")
+  (-body-stream [bs _]
+    (java.io.ByteArrayInputStream. ^bytes bs))
+  java.io.InputStream
+  (-body-stream [stream _] stream)
+
+  String
+  (-body-stream [^String s request]
+    (java.io.ByteArrayInputStream.
+     (if-let [encoding (charset request)]
+       (.getBytes s ^String encoding)
+       (.getBytes s "utf-8"))))
+  nil
+  (-body-stream [_ _] nil))
 

@@ -6,14 +6,12 @@
 
 (ns yetti.adapter
   (:require
-   [yetti.util :as yu]
-   [yetti.websocket :as ws]
+   [clojure.stacktrace :as ctr]
+   [ring.websocket :as-alias rws]
    [yetti.request :as yrq]
    [yetti.response :as yrs]
-   [ring.response :as rresp]
-   [ring.request :as rreq]
-   [clojure.stacktrace :as ctr]
-   [ring.websocket :as rws])
+   [yetti.util :as yu]
+   [yetti.websocket :as yws])
   (:import
    io.undertow.Undertow
    io.undertow.UndertowOptions
@@ -67,15 +65,16 @@
     (if (fn? on-error)
       (on-error cause request)
       (println trace))
-    {::rresp/status 500
-     ::rresp/body trace
-     ::rresp/headers {"content-type" "text/plain"}}))
+    {::yrs/status 500
+     ::yrs/body trace
+     ::yrs/headers {"content-type" "text/plain"}}))
 
 (defn- handle-response
   [exchange request response {:keys [:http/on-error] :as options}]
   (try
-    (if-let [listener (::rws/listener response)]
-      (ws/upgrade-response exchange listener options)
+    (if-let [listener (or (::yws/listener response)
+                          (::rws/listener response))]
+      (yws/upgrade-response exchange listener options)
       (yrs/write-response! exchange response))
     (catch Throwable cause
       (if (fn? on-error)

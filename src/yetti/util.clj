@@ -43,6 +43,12 @@
 (def default-temp-dir
   (Paths/get "/tmp/undertow/" (into-array String [])))
 
+(def re-charset
+  #"(?x);(?:.*\s)?(?i:charset)=(?:
+      ([!\#$%&'*\-+.0-9A-Z\^_`a-z\|~]+)|  # token
+      \"((?:\\\"|[^\"])*)\"               # quoted
+    )\s*(?:;|$)")
+
 (defn get-exchange
   [request]
   (or (:yetti.adapter/exchange request)

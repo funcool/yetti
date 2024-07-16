@@ -7,10 +7,8 @@
 (ns yetti.websocket
   (:require
    [clojure.string :as str]
-   [ring.request :as rreq]
-   [ring.websocket :as rws]
    [ring.websocket.protocols :as rwp]
-   [yetti.request :as req]
+   [yetti.request :as yrq]
    [yetti.util :as yu])
   (:import
    clojure.lang.IFn
@@ -164,12 +162,61 @@
   This is a ring2 aware, more efficient version of
   `ring.websocket/upgrade-request?` function."
   [request]
-  (let [upgrade    (rreq/get-header request "upgrade")
-        connection (rreq/get-header request "connection")]
+  (let [upgrade    (yrq/get-header request "upgrade")
+        connection (yrq/get-header request "connection")]
     (and (string? upgrade)
          (string? connection)
          (str/includes? (str/lower-case upgrade) "websocket")
          (str/includes? (str/lower-case connection) "upgrade"))))
+
+(defn open?
+  [socket]
+  (boolean (rwp/-open? socket)))
+
+(defn send
+  ([socket message]
+   (rwp/-send socket message))
+  ([socket message succeed fail]
+   (rwp/-send-async socket message succeed fail)))
+
+(defn ping
+  ([socket]
+   (rwp/-ping socket (ByteBuffer/allocate 0)))
+  ([socket data]
+   (rwp/-ping socket data)))
+
+(defn pong
+  ([socket]
+   (rwp/-pong socket (ByteBuffer/allocate 0)))
+  ([socket data]
+   (rwp/-pong socket data)))
+
+(defn close
+  ([socket]
+   (rwp/-close socket 1000 ""))
+  ([socket code reason]
+   (rwp/-close socket code reason)))
+
+(defn upgrade-request?
+  "Returns true if the request map is a websocket upgrade request."
+  [request]
+  (let [{{:strs [connection upgrade]} :headers} request]
+    (and upgrade
+         connection
+         (re-find #"\b(?i)upgrade\b" connection)
+         (.equalsIgnoreCase "websocket" upgrade))))
+
+(defn websocket-response?
+  "Returns true if the response contains a websocket listener."
+  [response]
+  (contains? response ::listener))
+
+(defn request-protocols
+  "Returns a collection of websocket subprotocols from a request map."
+  [request]
+  (some-> (:headers request)
+          (get "sec-websocket-protocol")
+          (str/split #"\s*,\s*")))
 
 (defn- listener->handler
   [listener]
