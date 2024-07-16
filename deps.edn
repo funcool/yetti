@@ -1,19 +1,20 @@
 {:paths ["src" "target/classes"]
  :deps
- {io.undertow/undertow-core {:mvn/version "2.3.10.Final"}
-  ring/ring-core {:mvn/version "1.11.0-RC1"}}
+ {io.undertow/undertow-core {:mvn/version "2.3.14.Final"}
+  org.ring-clojure/ring-core-protocols {:mvn/version "1.12.2"}
+  org.ring-clojure/ring-websocket-protocols {:mvn/version "1.12.2"}}
 
  :aliases
  {:dev
   {:extra-deps
    {org.clojure/tools.namespace {:mvn/version "RELEASE"}
-    org.clojure/clojure {:mvn/version "1.12.0-alpha5"}
+    org.clojure/clojure {:mvn/version "1.12.0-beta1"}
     org.clojure/test.check {:mvn/version "RELEASE"}
     com.bhauman/rebel-readline {:mvn/version "RELEASE"}
-    clj-http/clj-http {:mvn/version "3.12.3"}
+    clj-http/clj-http {:mvn/version "3.13.0"}
     criterium/criterium {:mvn/version "RELEASE"}
     org.slf4j/slf4j-nop {:mvn/version "RELEASE"}
-    com.taoensso/nippy {:mvn/version "3.3.0"}
+    com.taoensso/nippy {:mvn/version "3.4.2"}
     funcool/promesa {:mvn/version "11.0.678"}}
 
    :extra-paths ["test" "dev" "target/classes"]}
@@ -24,5 +25,5 @@
    :main-opts ["-m" "antq.core"]}
 
   :build
-  {:extra-deps {io.github.clojure/tools.build {:git/tag "v0.9.6" :git/sha "8e78bcc"}}
+  {:extra-deps {io.github.clojure/tools.build {:git/tag "v0.10.5" :git/sha "2a21b7a"}}
    :ns-default build}}}
