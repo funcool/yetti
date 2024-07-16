@@ -20,6 +20,12 @@ Relevant characteristics:
   for callback based API, so we opted to directly to no support it.
 
 
+**NOTE: currently, the future of ring-2.0 is completely
+uncertain. Regardless of that, this library only depends on ring's
+stable APIs (protocols), and the rest of ring-2.0's ideas and
+proposals are bundled internally.**
+
+
 ## Usage
 
 ### Quick Start
@@ -37,14 +43,14 @@ In the REPL:
 
 ```clojure
 (require '[yetti.adapter :as yt]
-         '[ring.response :as res])
+         '[yett.response :as yrs])
 
 ;; Using Response type
 
 (defn handler
   [request]
-  {::res/status 200
-   ::res/body "hello world"})
+  {::yrs/status 200
+   ::yrs/body "hello world"})
 
 (-> handler
     (yt/server {:http/port 11010})
@@ -69,47 +75,43 @@ If you want a ring1 compatible request:
 The possible values for `:ring/compat` are:
 
  - `:ring2`: the default, receives a ring2 compatible, map-like type
-   (with main focus on performance)
- - `:ring1`: receives a ring1 compliant map
-
-In all modes, the expected response can be in ring2 or ring1 format,
-the both are supported out of the box.
-
+   (with main focus on performance) and expectes a ring2 or ring1
+   response to be returned indistinctly
+ - `:ring1`: receives a ring1 compliant map and expectes ring1
+   response to be returned
 
 
 ### WebSocket
 
-Any ring handler can upgrade to websocket protocol, there is an example:
+Any handler can upgrade to websocket protocol, there is an example:
 
 ```clojure
 (require '[yetti.websocket :as yws]
-         '[ring.response :as-alias rres]
-         '[ring.websocket :as-alias rws])
+         '[yetti.response :as-alias yrs]
+         '[yetti.websocket :as-alias yws])
 
 (defn handler
   [request]
   ;; We prefer use `yws/upgrade-request?` over `rws/upgrade-request?`
   ;; in case if you use ring2 requests, for performance reasons.
   (if (yws/upgrade-request? request)
-    {::rws/listener {:on-open  (fn [ws])
+    {::yws/listener {:on-open  (fn [ws])
                      :on-error (fn [ws e])
                      :on-close (fn [ws status-code reason])
                      :on-message  (fn [ws message])
                      :on-ping  (fn [ws data])
                      :on-pong  (fn [ws data])}}
-    {::rres/status 404}))
+    {::yrs/status 404}))
 ```
 
-IWebSocket protocol allows you to read and write data on the `ws` value:
+This is the main API for interacting with websocket channel/connection:
 
-- `(rws/send ws msg)`
-- `(rws/send ws msg callback)`
-- `(rws/ping ws msg)`
-- `(rws/pong ws msg)`
-- `(rws/close ws)`
-
-There also an additional API from this adapter:
-
+- `(yws/open? ws msg)`
+- `(yws/send ws msg)`
+- `(yws/send ws msg callback)`
+- `(yws/ping ws msg)`
+- `(yws/pong ws msg)`
+- `(yws/close ws)`
 - `(yws/get-remote-addr ws)`
 - `(yws/set-idle-timeout! ws timeout)`
 
@@ -118,6 +120,9 @@ Notice that we support different type of msg:
 
 * **byte[]** and **ByteBuffer**: send binary websocket message
 * **String**: send text websocket message
+
+All this internally uses the `ring-websocket-protocols` so it has full
+interop with already existing ring websocket code.
 
 
 ## License
