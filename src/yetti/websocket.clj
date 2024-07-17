@@ -5,8 +5,10 @@
 ;; Copyright © Andrey Antukh <niwi@niwi.nz>
 
 (ns yetti.websocket
+  (:refer-clojure :exclude [send])
   (:require
    [clojure.string :as str]
+   [ring.websocket :as-alias rws]
    [ring.websocket.protocols :as rwp]
    [yetti.request :as yrq]
    [yetti.util :as yu])
@@ -197,19 +199,11 @@
   ([socket code reason]
    (rwp/-close socket code reason)))
 
-(defn upgrade-request?
-  "Returns true if the request map is a websocket upgrade request."
-  [request]
-  (let [{{:strs [connection upgrade]} :headers} request]
-    (and upgrade
-         connection
-         (re-find #"\b(?i)upgrade\b" connection)
-         (.equalsIgnoreCase "websocket" upgrade))))
-
 (defn websocket-response?
   "Returns true if the response contains a websocket listener."
   [response]
-  (contains? response ::listener))
+  (or (contains? response ::listener)
+      (contains? response ::rws/listener)))
 
 (defn request-protocols
   "Returns a collection of websocket subprotocols from a request map."
