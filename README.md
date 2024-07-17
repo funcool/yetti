@@ -34,8 +34,8 @@ On deps.edn:
 
 ```clojure
 funcool/yetti
-{:git/tag "v10.0"
- :git/sha "520613f"
+{:git/tag "v11.0"
+ :git/sha "e27eb51"
  :git/url "https://github.com/funcool/yetti.git"}
 ```
 
