@@ -43,7 +43,7 @@ In the REPL:
 
 ```clojure
 (require '[yetti.adapter :as yt]
-         '[yett.response :as yrs])
+         '[yetti.response :as yrs])
 
 ;; Using Response type
 
@@ -95,12 +95,12 @@ Any handler can upgrade to websocket protocol, there is an example:
   ;; We prefer use `yws/upgrade-request?` over `rws/upgrade-request?`
   ;; in case if you use ring2 requests, for performance reasons.
   (if (yws/upgrade-request? request)
-    {::yws/listener {:on-open  (fn [ws])
-                     :on-error (fn [ws e])
-                     :on-close (fn [ws status-code reason])
-                     :on-message  (fn [ws message])
-                     :on-ping  (fn [ws data])
-                     :on-pong  (fn [ws data])}}
+    {::yws/listener {:on-open    (fn [ws])
+                     :on-error   (fn [ws e])
+                     :on-close   (fn [ws status-code reason])
+                     :on-message (fn [ws message])
+                     :on-ping    (fn [ws data])
+                     :on-pong    (fn [ws data])}}
     {::yrs/status 404}))
 ```
 
