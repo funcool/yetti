@@ -13,6 +13,7 @@
    [clojure.tools.namespace.repl :as repl]
    [clojure.walk :refer [macroexpand-all]]
    [criterium.core  :as crit]
+   [me.flowthing.pp :as pp]
    [promesa.core :as p]
    [promesa.exec :as px]
    [ring.core.protocols :as rcp]

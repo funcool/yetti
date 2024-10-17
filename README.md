@@ -19,7 +19,6 @@ Relevant characteristics:
 - No ring-async support, with virtual threads there are no real need
   for callback based API, so we opted to directly to no support it.
 
-
 **NOTE: currently, the future of ring-2.0 is completely
 uncertain. Regardless of that, this library only depends on ring's
 stable APIs (protocols), and the rest of ring-2.0's ideas and
