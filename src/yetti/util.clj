@@ -82,22 +82,6 @@
         (withParsers [xform multipart])
         (build))))
 
-(defn form-item->map
-  [^String k ^FormData$FormValue fval]
-  (if (.isFileItem fval)
-    (let [^FormData$FileItem fitem (.getFileItem fval)
-          headers (headers->map (.getHeaders fval))
-          mtype   (get headers "content-type")]
-      (cond-> {:name k
-               :headers headers
-               :filename (.getFileName fval)
-               :path (.getFile fitem)
-               :size (.getFileSize fitem)}
-        (some? mtype)
-        (assoc :mtype mtype)))
-    {:value (.getValue fval)
-     :name k}))
-
 (defn parse-query-data
   ([request] (parse-query-data request {}))
   ([request {:keys [key-fn] :or {key-fn keyword}}]
@@ -149,6 +133,33 @@
 
         (.put ^Map rcookies ^String k ^Cookie item)))))
 
+(defn- parse-form-value
+  [^String key ^FormData$FormValue fval]
+  (if (.isFileItem fval)
+    (let [^FormData$FileItem fitem (.getFileItem fval)
+          headers (headers->map (.getHeaders fval))
+          mtype   (get headers "content-type")]
+      (cond-> {:name key
+               :headers headers
+               :filename (.getFileName fval)
+               :path (.getFile fitem)
+               :size (.getFileSize fitem)}
+        (some? mtype)
+        (assoc :mtype mtype)))
+    (.getValue fval)))
+
+(defn- append-form-entry
+  [val v]
+  (cond
+    (nil? val)
+    v
+
+    (vector? val)
+    (conj val v)
+
+    :else
+    [val v]))
+
 (defn parse-form-data
   ([request] (parse-form-data request {}))
   ([request {:keys [key-fn] :or {key-fn keyword} :as options}]
@@ -156,14 +167,17 @@
      (let [factory (parser-factory options)
            parser  (.createParser ^FormParserFactory factory
                                   ^HttpServerExchange exchange)
-           form    (some-> parser .parseBlocking)
-           xf      (comp
-                    (mapcat (fn [^String k]
-                              (map (partial form-item->map k) (.get form k))))
-                    (map (fn [{:keys [name value] :as upload}]
-                           [(key-fn name)
-                            (or value upload)])))]
-       (into {} xf (seq form))))))
+           form    (some-> parser .parseBlocking)]
+       (reduce (fn [result key]
+                 (let [fval (.get ^FormData form ^String key)]
+                   (if (instance? FormData$FormValue fval)
+                     (update result key append-form-entry (parse-form-value key fval))
+                     (reduce (fn [result fval]
+                               (update result key append-form-entry (parse-form-value key fval)))
+                             result
+                             fval))))
+                {}
+                (seq form))))))
 
 (defn get-request-header
   [^HttpServerExchange exchange ^String name]
