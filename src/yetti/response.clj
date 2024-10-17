@@ -41,6 +41,13 @@
   (when-let [content-type (-> response headers (get "content-type"))]
     (second (re-find yu/re-charset content-type))))
 
+(defn stream-body
+  "Coerce a function to an instance of StreamableResponseBody"
+  [f]
+  (reify rcp/StreamableResponseBody
+    (write-body-to-stream [_ response output]
+      (f response output))))
+
 (defn write-response!
   "Update the HttpServerExchange using a response map."
   [^HttpServerExchange exchange response]
