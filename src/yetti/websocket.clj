@@ -54,7 +54,7 @@
   (on-ping [m socket data]
     (if-let [kv (find m :on-ping)]
       ((val kv) socket data)
-      (p/-pong socket data))))
+      (rwp/-pong socket data))))
 
 (defn- fn->callback
   [succeed fail]
