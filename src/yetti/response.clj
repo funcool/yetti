@@ -41,6 +41,10 @@
   (when-let [content-type (-> response headers (get "content-type"))]
     (second (re-find yu/re-charset content-type))))
 
+(defn write-body-to-stream
+  [body response output]
+  (rcp/write-body-to-stream body response output))
+
 (defn stream-body
   "Coerce a function to an instance of StreamableResponseBody"
   [f]
