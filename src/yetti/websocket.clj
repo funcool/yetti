@@ -37,6 +37,25 @@
 
 (set! *warn-on-reflection* true)
 
+(extend-type clojure.lang.IPersistentMap
+  rwp/Listener
+  (on-open [m socket]
+    (when-let [kv (find m :on-open)] ((val kv) socket)))
+  (on-message [m socket message]
+    (when-let [kv (find m :on-message)] ((val kv) socket message)))
+  (on-pong [m socket data]
+    (when-let [kv (find m :on-pong)] ((val kv) socket data)))
+  (on-error [m socket throwable]
+    (when-let [kv (find m :on-error)] ((val kv) socket throwable)))
+  (on-close [m socket code reason]
+    (when-let [kv (find m :on-close)] ((val kv) socket code reason)))
+
+  rwp/PingListener
+  (on-ping [m socket data]
+    (if-let [kv (find m :on-ping)]
+      ((val kv) socket data)
+      (p/-pong socket data))))
+
 (defn- fn->callback
   [succeed fail]
   (reify WebSocketCallback
@@ -248,9 +267,8 @@
 (defn upgrade-response
   [^HttpServerExchange exchange listener options]
 
-  (assert (or (satisfies? rwp/Listener listener)
-              (fn? listener))
-          "listener should satisfy Listener protocol or be a callback")
+  (assert (satisfies? rwp/Listener listener)
+          "listener should satisfy Listener protocol")
 
   (let [^WebSocketProtocolHandshakeHandler handler (listener->handler listener)]
     (.addExtension handler (PerMessageDeflateHandshake. false 6))
