@@ -134,7 +134,7 @@
         (.put ^Map rcookies ^String k ^Cookie item)))))
 
 (defn- parse-form-value
-  [^String key ^FormData$FormValue fval]
+  [key ^FormData$FormValue fval]
   (if (.isFileItem fval)
     (let [^FormData$FileItem fitem (.getFileItem fval)
           headers (headers->map (.getHeaders fval))
@@ -169,11 +169,12 @@
                                   ^HttpServerExchange exchange)
            form    (some-> parser .parseBlocking)]
        (reduce (fn [result key]
-                 (let [fval (.get ^FormData form ^String key)]
+                 (let [fkey  (key-fn key)
+                       fval (.get ^FormData form ^String key)]
                    (if (instance? FormData$FormValue fval)
-                     (update result key append-form-entry (parse-form-value key fval))
+                     (update result fkey append-form-entry (parse-form-value key fval))
                      (reduce (fn [result fval]
-                               (update result key append-form-entry (parse-form-value key fval)))
+                               (update result fkey append-form-entry (parse-form-value key fval)))
                              result
                              fval))))
                 {}
