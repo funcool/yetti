@@ -39,9 +39,7 @@
    :http/host "localhost"
    :http/idle-timeout 300000
    :http/parse-timeout 30000
-   :xnio/buffer-size (* 1024 16) ; 16 KiB
    :xnio/direct-buffers true
-   :xnio/dispatch :virtual
    :ring/compat :ring2
    :socket/tcp-nodelay true
    :socket/backlog 1024
@@ -50,12 +48,9 @@
    :socket/write-timeout 300000
    :websocket/idle-timeout 500000})
 
-(def ^:private default-executor
-  (Executors/newVirtualThreadPerTaskExecutor))
-
 (defn dispatch!
   ([^HttpServerExchange exchange ^Runnable f]
-   (.dispatch exchange ^Executor default-executor f))
+   (.dispatch exchange f))
   ([^HttpServerExchange exchange ^Executor executor ^Runnable f]
    (.dispatch exchange executor f)))
 
@@ -149,6 +144,7 @@
                    :xnio/buffer-size
                    :xnio/io-threads
                    :xnio/worker-threads
+                   :xnio/worker-max-threads
                    :socket/send-buffer
                    :socket/receive-buffer
                    :socket/write-timeout
@@ -159,34 +155,47 @@
                    ]
             :as options}]
 
-  (-> (Undertow/builder)
-      (.addHttpListener port host)
-      (cond-> io-threads             (.setIoThreads io-threads))
-      (cond-> worker-threads         (.setWorkerThreads worker-threads))
-      (cond-> buffer-size            (.setBufferSize buffer-size))
-      (cond-> (some? direct-buffers) (.setDirectBuffers direct-buffers))
+  (let [num-processors     (.availableProcessors (Runtime/getRuntime))
+        io-threads         (or io-threads (max 2 num-processors))
 
-      (cond-> (some? backlog)        (.setSocketOption org.xnio.Options/BACKLOG (int backlog)))
-      (cond-> (some? read-timeout)   (.setSocketOption org.xnio.Options/READ_TIMEOUT (int read-timeout)))
-      (cond-> (some? write-timeout)  (.setSocketOption org.xnio.Options/WRITE_TIMEOUT (int write-timeout)))
-      (cond-> (some? tcp-nodelay)    (.setSocketOption org.xnio.Options/TCP_NODELAY ^Boolean tcp-nodelay))
-      (cond-> (some? reuse-address)  (.setSocketOption org.xnio.Options/REUSE_ADDRESSES ^Boolean reuse-address))
-      (cond-> (some? send-buffer)    (.setSocketOption org.xnio.Options/SEND_BUFFER (int send-buffer)))
-      (cond-> (some? receive-buffer) (.setSocketOption org.xnio.Options/RECEIVE_BUFFER (int receive-buffer)))
+        worker-threads     (or worker-threads (* io-threads 4))
+        worker-max-threads (or worker-max-threads (* io-threads 8))]
 
-      (.setServerOption UndertowOptions/MAX_COOKIES (int max-cookies))
-      (.setServerOption UndertowOptions/MAX_HEADERS (int max-headers))
-      (.setServerOption UndertowOptions/MAX_HEADER_SIZE (int max-headers-size))
-      (.setServerOption UndertowOptions/ALWAYS_SET_KEEP_ALIVE, false)
-      (.setServerOption UndertowOptions/BUFFER_PIPELINED_DATA false)
-      (.setServerOption UndertowOptions/IDLE_TIMEOUT (int idle-timeout))
-      (.setServerOption UndertowOptions/ENABLE_HTTP2 true)
-      (.setServerOption UndertowOptions/HTTP_HEADERS_CACHE_SIZE (int headers-cache-size))
-      (.setServerOption UndertowOptions/MULTIPART_MAX_ENTITY_SIZE max-multipart-body-size)
-      (.setServerOption UndertowOptions/MAX_ENTITY_SIZE max-body-size)
-      (.setServerOption UndertowOptions/HTTP2_SETTINGS_ENABLE_PUSH false)
-      (.setHandler  ^HttpHandler handler)
-      (.build)))
+    (-> (Undertow/builder)
+        (.addHttpListener port host)
+        (cond-> (int? buffer-size)     (.setBufferSize buffer-size))
+        (cond-> (some? direct-buffers) (.setDirectBuffers direct-buffers))
+
+        (cond-> (some? backlog)        (.setSocketOption org.xnio.Options/BACKLOG (int backlog)))
+        (cond-> (some? read-timeout)   (.setSocketOption org.xnio.Options/READ_TIMEOUT (int read-timeout)))
+        (cond-> (some? write-timeout)  (.setSocketOption org.xnio.Options/WRITE_TIMEOUT (int write-timeout)))
+        (cond-> (some? tcp-nodelay)    (.setSocketOption org.xnio.Options/TCP_NODELAY ^Boolean tcp-nodelay))
+        (cond-> (some? reuse-address)  (.setSocketOption org.xnio.Options/REUSE_ADDRESSES ^Boolean reuse-address))
+        (cond-> (some? send-buffer)    (.setSocketOption org.xnio.Options/SEND_BUFFER (int send-buffer)))
+        (cond-> (some? receive-buffer) (.setSocketOption org.xnio.Options/RECEIVE_BUFFER (int receive-buffer)))
+
+        (cond-> (int? io-threads)
+          (.setWorkerOption org.xnio.Options/WORKER_IO_THREADS io-threads))
+
+        (cond-> (int? worker-threads)
+          (.setWorkerOption org.xnio.Options/WORKER_TASK_CORE_THREADS worker-threads))
+
+        (cond-> (int? worker-max-threads)
+          (.setWorkerOption org.xnio.Options/WORKER_TASK_MAX_THREADS worker-threads))
+
+        (.setServerOption UndertowOptions/MAX_COOKIES (int max-cookies))
+        (.setServerOption UndertowOptions/MAX_HEADERS (int max-headers))
+        (.setServerOption UndertowOptions/MAX_HEADER_SIZE (int max-headers-size))
+        (.setServerOption UndertowOptions/ALWAYS_SET_KEEP_ALIVE, false)
+        (.setServerOption UndertowOptions/BUFFER_PIPELINED_DATA false)
+        (.setServerOption UndertowOptions/IDLE_TIMEOUT (int idle-timeout))
+        (.setServerOption UndertowOptions/ENABLE_HTTP2 true)
+        (.setServerOption UndertowOptions/HTTP_HEADERS_CACHE_SIZE (int headers-cache-size))
+        (.setServerOption UndertowOptions/MULTIPART_MAX_ENTITY_SIZE max-multipart-body-size)
+        (.setServerOption UndertowOptions/MAX_ENTITY_SIZE max-body-size)
+        (.setServerOption UndertowOptions/HTTP2_SETTINGS_ENABLE_PUSH false)
+        (.setHandler  ^HttpHandler handler)
+        (.build))))
 
 (defn ^Undertow server
   "
