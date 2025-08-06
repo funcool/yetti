@@ -35,11 +35,13 @@
    :http/max-headers-size (* 1024 1024) ; 1 MiB
    :http/max-body-size (* 1024 1024 6) ; 6 MiB
    :http/max-multipart-body-size (* 1024 1024 12) ; 12 MiB
+   :xnio/buffer-size (- (* 1024 16) 20)
    :http/port 11010
    :http/host "localhost"
    :http/idle-timeout 300000
    :http/parse-timeout 30000
    :xnio/direct-buffers true
+   :xnio/worker-threads-keep-alive 30000
    :ring/compat :ring2
    :socket/tcp-nodelay true
    :socket/backlog 1024
@@ -95,39 +97,55 @@
 (defn- create-handler
   "Creates an instance of the final handler that will be attached to
   Server."
-  [handler-fn {:keys [:xnio/dispatch] :as options}]
+  [handler-fn {:keys [:xnio/dispatch :events/on-dispatch] :as options}]
   (let [dispatch-fn (dispatch-fn handler-fn options)]
     (cond
       (instance? Executor dispatch)
       (reify HttpHandler
         (^void handleRequest [_ ^HttpServerExchange exchange]
-         (.dispatch exchange
-                    ^Executor dispatch
-                    ^Runnable #(do (.startBlocking exchange)
-                                   (dispatch-fn exchange)))))
+         (let [spoint (System/nanoTime)]
+           (.dispatch exchange
+                      ^Executor dispatch
+                      ^Runnable #(do
+                                   (when (fn? on-dispatch)
+                                     (on-dispatch exchange spoint))
+                                   (.startBlocking exchange)
+                                   (dispatch-fn exchange))))))
 
       (= :virtual dispatch)
       (let [executor (Executors/newVirtualThreadPerTaskExecutor)]
         (reify HttpHandler
           (^void handleRequest [_ ^HttpServerExchange exchange]
-           (.dispatch exchange
-                      ^Executor executor
-                      ^Runnable #(do (.startBlocking exchange)
-                                     (dispatch-fn exchange))))))
+           (let [spoint (System/nanoTime)]
+             (.dispatch exchange
+                        ^Executor executor
+                        ^Runnable #(do
+                                     (when (fn? on-dispatch)
+                                       (on-dispatch exchange spoint))
+                                     (.startBlocking exchange)
+                                     (dispatch-fn exchange)))))))
 
       (false? dispatch)
       (reify HttpHandler
         (^void handleRequest [_ ^HttpServerExchange exchange]
-         (.dispatch exchange
-                    ^Executor SameThreadExecutor/INSTANCE
-                    ^Runnable #(dispatch-fn exchange))))
+         (let [spoint (System/nanoTime)]
+           (.dispatch exchange
+                      ^Executor SameThreadExecutor/INSTANCE
+                      ^Runnable #(do
+                                   (when (fn? on-dispatch)
+                                     (on-dispatch exchange spoint))
+                                   (dispatch-fn exchange))))))
 
       :else
       (reify HttpHandler
         (^void handleRequest [_ ^HttpServerExchange exchange]
-         (.dispatch exchange
-                    ^Runnable #(do (.startBlocking exchange)
-                                   (dispatch-fn exchange))))))))
+         (let [spoint (System/nanoTime)]
+           (.dispatch exchange
+                      ^Runnable #(do
+                                   (when (fn? on-dispatch)
+                                     (on-dispatch exchange spoint))
+                                   (.startBlocking exchange)
+                                   (dispatch-fn exchange)))))))))
 
 (defn- create-server
   "Construct a Server instance."
@@ -144,6 +162,7 @@
                    :xnio/buffer-size
                    :xnio/io-threads
                    :xnio/worker-threads
+                   :xnio/worker-threads-keep-alive
                    :xnio/worker-max-threads
                    :socket/send-buffer
                    :socket/receive-buffer
@@ -151,18 +170,21 @@
                    :socket/read-timeout
                    :socket/reuse-address
                    :socket/tcp-nodelay
-                   :socket/backlog
-                   ]
+                   :socket/backlog]
             :as options}]
 
-  (let [num-processors     (.availableProcessors (Runtime/getRuntime))
-        io-threads         (or io-threads (max 2 num-processors))
+  (let [num-processors      (.availableProcessors (Runtime/getRuntime))
+        io-threads          (or io-threads (max 2 num-processors))
 
-        worker-threads     (or worker-threads (* io-threads 4))
-        worker-max-threads (or worker-max-threads (* io-threads 8))]
+        worker-threads'     (or worker-threads (* io-threads 2))
+        worker-max-threads' (or worker-max-threads
+                               (if worker-threads
+                                 worker-threads
+                                 (* io-threads 16)))]
 
     (-> (Undertow/builder)
         (.addHttpListener port host)
+
         (cond-> (int? buffer-size)     (.setBufferSize buffer-size))
         (cond-> (some? direct-buffers) (.setDirectBuffers direct-buffers))
 
@@ -175,13 +197,13 @@
         (cond-> (some? receive-buffer) (.setSocketOption org.xnio.Options/RECEIVE_BUFFER (int receive-buffer)))
 
         (cond-> (int? io-threads)
-          (.setWorkerOption org.xnio.Options/WORKER_IO_THREADS io-threads))
+          (.setWorkerOption org.xnio.Options/WORKER_IO_THREADS (int io-threads)))
 
-        (cond-> (int? worker-threads)
-          (.setWorkerOption org.xnio.Options/WORKER_TASK_CORE_THREADS worker-threads))
+        (.setWorkerOption org.xnio.Options/WORKER_TASK_CORE_THREADS (int worker-threads'))
+        (.setWorkerOption org.xnio.Options/WORKER_TASK_MAX_THREADS (int worker-max-threads'))
 
-        (cond-> (int? worker-max-threads)
-          (.setWorkerOption org.xnio.Options/WORKER_TASK_MAX_THREADS worker-threads))
+        (cond-> (int? worker-threads-keep-alive)
+          (.setWorkerOption org.xnio.Options/WORKER_TASK_KEEPALIVE (int worker-threads-keep-alive)))
 
         (.setServerOption UndertowOptions/MAX_COOKIES (int max-cookies))
         (.setServerOption UndertowOptions/MAX_HEADERS (int max-headers))
