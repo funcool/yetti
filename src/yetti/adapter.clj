@@ -41,7 +41,7 @@
    :http/idle-timeout 300000
    :http/parse-timeout 30000
    :xnio/direct-buffers true
-   :xnio/worker-threads-keep-alive 30000
+   :xnio/worker-thread-keep-alive 30000
    :ring/compat :ring2
    :socket/tcp-nodelay true
    :socket/backlog 1024
@@ -161,9 +161,9 @@
                    :xnio/direct-buffers
                    :xnio/buffer-size
                    :xnio/io-threads
-                   :xnio/worker-threads
-                   :xnio/worker-threads-keep-alive
-                   :xnio/worker-max-threads
+                   :xnio/worker-thread-keep-alive
+                   :xnio/min-worker-threads
+                   :xnio/max-worker-threads
                    :socket/send-buffer
                    :socket/receive-buffer
                    :socket/write-timeout
@@ -173,14 +173,20 @@
                    :socket/backlog]
             :as options}]
 
-  (let [num-processors      (.availableProcessors (Runtime/getRuntime))
-        io-threads          (or io-threads (max 2 num-processors))
+  (let [num-processors
+        (.availableProcessors (Runtime/getRuntime))
 
-        worker-threads'     (or worker-threads (* io-threads 2))
-        worker-max-threads' (or worker-max-threads
-                               (if worker-threads
-                                 worker-threads
-                                 (* io-threads 16)))]
+        io-threads
+        (or io-threads
+            (max 2 num-processors))
+
+        min-worker-threads
+        (or min-worker-threads
+            (* io-threads 2))
+
+        max-worker-threads
+        (or max-worker-threads
+            (* io-threads 32))]
 
     (-> (Undertow/builder)
         (.addHttpListener port host)
@@ -196,14 +202,12 @@
         (cond-> (some? send-buffer)    (.setSocketOption org.xnio.Options/SEND_BUFFER (int send-buffer)))
         (cond-> (some? receive-buffer) (.setSocketOption org.xnio.Options/RECEIVE_BUFFER (int receive-buffer)))
 
-        (cond-> (int? io-threads)
-          (.setWorkerOption org.xnio.Options/WORKER_IO_THREADS (int io-threads)))
+        (.setWorkerOption org.xnio.Options/WORKER_IO_THREADS (int io-threads))
+        (.setWorkerOption org.xnio.Options/WORKER_TASK_CORE_THREADS (int min-worker-threads))
+        (.setWorkerOption org.xnio.Options/WORKER_TASK_MAX_THREADS (int max-worker-threads))
 
-        (.setWorkerOption org.xnio.Options/WORKER_TASK_CORE_THREADS (int worker-threads'))
-        (.setWorkerOption org.xnio.Options/WORKER_TASK_MAX_THREADS (int worker-max-threads'))
-
-        (cond-> (int? worker-threads-keep-alive)
-          (.setWorkerOption org.xnio.Options/WORKER_TASK_KEEPALIVE (int worker-threads-keep-alive)))
+        (cond-> (int? worker-thread-keep-alive)
+          (.setWorkerOption org.xnio.Options/WORKER_TASK_KEEPALIVE (int worker-thread-keep-alive)))
 
         (.setServerOption UndertowOptions/MAX_COOKIES (int max-cookies))
         (.setServerOption UndertowOptions/MAX_HEADERS (int max-headers))
