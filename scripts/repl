@@ -1,10 +1,19 @@
 #!/usr/bin/env bash
 
-#export OPTIONS="-A:dev -J-XX:+UseShenandoahGC -J-XX:-OmitStackTraceInFastThrow -J-Xms50m -J-Xmx512m -J-Djdk.attach.allowAttachSelf -J-XX:+UnlockDiagnosticVMOptions -J-XX:+DebugNonSafepoints -J-Djava.net.preferIPv4Stack=true";
-#export OPTIONS="-A:dev -J-XX:+UseZGC -J-XX:-OmitStackTraceInFastThrow -J-Xms50m -J-Xmx512m -J-Djdk.attach.allowAttachSelf -J-XX:+UnlockDiagnosticVMOptions -J-XX:+DebugNonSafepoints -J-Djava.net.preferIPv4Stack=true";
-export OPTIONS="-A:dev -J-XX:+UseG1GC -J-XX:-OmitStackTraceInFastThrow -J-Xms50m -J-Xmx512m -J-Djdk.attach.allowAttachSelf -J-XX:+UnlockDiagnosticVMOptions -J-XX:+DebugNonSafepoints -J-Djava.net.preferIPv4Stack=true -J-Djdk.tracePinnedThreads=full";
+export JAVA_OPTS="\
+       -Xms50m \
+       -Xmx512m
+       -Djdk.attach.allowAttachSelf \
+       -Djdk.tracePinnedThreads=full \
+       -Djava.net.preferIPv4Stack=true \
+       -XX:+UseG1GC \
+       -XX:+UnlockExperimentalVMOptions \
+       -XX:-OmitStackTraceInFastThrow  \
+       --sun-misc-unsafe-memory-access=allow \
+       --enable-preview \
+       --enable-native-access=ALL-UNNAMED";
 
 export OPTIONS_EVAL="nil"
 
 set -ex
-exec clojure $OPTIONS -M -e "$OPTIONS_EVAL" -m rebel-readline.main
+exec clojure -A:dev -M -e "$OPTIONS_EVAL" -m rebel-readline.main
