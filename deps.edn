@@ -1,20 +1,20 @@
 {:paths ["src" "target/classes"]
  :deps
  {io.undertow/undertow-core {:mvn/version "2.3.18.Final"}
-  org.ring-clojure/ring-core-protocols {:mvn/version "1.12.2"}
-  org.ring-clojure/ring-websocket-protocols {:mvn/version "1.12.2"}}
+  org.ring-clojure/ring-core-protocols {:mvn/version "1.15.3"}
+  org.ring-clojure/ring-websocket-protocols {:mvn/version "1.15.3"}}
 
  :aliases
  {:dev
   {:extra-deps
    {org.clojure/tools.namespace {:mvn/version "RELEASE"}
-    org.clojure/clojure {:mvn/version "1.12.0"}
+    org.clojure/clojure {:mvn/version "1.12.3"}
     org.clojure/test.check {:mvn/version "RELEASE"}
     com.bhauman/rebel-readline {:mvn/version "RELEASE"}
-    clj-http/clj-http {:mvn/version "3.13.0"}
+    clj-http/clj-http {:mvn/version "3.13.1"}
     criterium/criterium {:mvn/version "RELEASE"}
     org.slf4j/slf4j-nop {:mvn/version "RELEASE"}
-    com.taoensso/nippy {:mvn/version "3.4.2"}
+    com.taoensso/nippy {:mvn/version "3.6.0"}
     funcool/promesa {:mvn/version "11.0.678"}
     fipp/fipp {:mvn/version "0.6.26"}
 
