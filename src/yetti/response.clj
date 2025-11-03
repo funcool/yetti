@@ -45,6 +45,10 @@
   [body response output]
   (rcp/write-body-to-stream body response output))
 
+(defn stream-body?
+  [o]
+  (satisfies? rcp/StreamableResponseBody o))
+
 (defn stream-body
   "Coerce a function to an instance of StreamableResponseBody"
   [f]
