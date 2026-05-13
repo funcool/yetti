@@ -1,14 +1,14 @@
 {:paths ["src" "target/classes"]
  :deps
- {io.undertow/undertow-core {:mvn/version "2.3.22.Final"}
-  org.ring-clojure/ring-core-protocols {:mvn/version "1.15.3"}
-  org.ring-clojure/ring-websocket-protocols {:mvn/version "1.15.3"}}
+ {io.undertow/undertow-core {:mvn/version "2.4.0.Final"}
+  org.ring-clojure/ring-core-protocols {:mvn/version "1.15.4"}
+  org.ring-clojure/ring-websocket-protocols {:mvn/version "1.15.4"}}
 
  :aliases
  {:dev
   {:extra-deps
    {org.clojure/tools.namespace {:mvn/version "RELEASE"}
-    org.clojure/clojure {:mvn/version "1.12.4"}
+    org.clojure/clojure {:mvn/version "1.12.5"}
     org.clojure/test.check {:mvn/version "RELEASE"}
     com.bhauman/rebel-readline {:mvn/version "RELEASE"}
     clj-http/clj-http {:mvn/version "3.13.1"}
