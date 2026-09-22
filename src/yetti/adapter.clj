@@ -12,6 +12,7 @@
    [yetti.response :as yrs]
    [yetti.util :as yu]
    [yetti.websocket :as yws])
+
   (:import
    io.undertow.Undertow
    io.undertow.UndertowOptions
@@ -170,7 +171,8 @@
                    :socket/read-timeout
                    :socket/reuse-address
                    :socket/tcp-nodelay
-                   :socket/backlog]
+                   :socket/backlog
+                   :server/statistics]
             :as options}]
 
   (let [num-processors
@@ -201,6 +203,9 @@
         (cond-> (some? reuse-address)  (.setSocketOption org.xnio.Options/REUSE_ADDRESSES ^Boolean reuse-address))
         (cond-> (some? send-buffer)    (.setSocketOption org.xnio.Options/SEND_BUFFER (int send-buffer)))
         (cond-> (some? receive-buffer) (.setSocketOption org.xnio.Options/RECEIVE_BUFFER (int receive-buffer)))
+
+        (cond-> (true? statistics)
+          (.setServerOption UndertowOptions/ENABLE_STATISTICS true))
 
         (.setWorkerOption org.xnio.Options/WORKER_IO_THREADS (int io-threads))
         (.setWorkerOption org.xnio.Options/WORKER_TASK_CORE_THREADS (int min-worker-threads))
@@ -238,6 +243,7 @@
   :http/max-cookies              - max number of allowed cookies in the request (defaults to 32)
   :http/max-headers              - max number of allowed headers in the request (defaults to 64)
   :ring/compat                   - ring compatibility mode: :ring2 (default), :ring2-map, :ring1
+  :server/statistics             - enables the undertow connection statistics (default false)
 
   :xnio/buffer-size              - default http IO buffe size (default 64 KiB)
   :xnio/direct-buffers           - use or not direct buffers (default to false)
